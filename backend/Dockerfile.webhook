@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Копируем файлы зависимостей
+COPY requirements.txt .
+
+# Устанавливаем зависимости
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копируем код приложения
+COPY . .
+
+# Переменные окружения (будут переопределены через environment в docker-compose)
+ENV WEBHOOK_PORT=8080
+ENV WEBHOOK_HOST=0.0.0.0
+ENV DATABASE_URL=sqlite:///./data/data.sqlite3
+ENV MAX_BOT_TOKEN=""
+ENV WEBHOOK_URL=""
+
+# Создаем директорию для БД
+RUN mkdir -p /app/data
+
+# Открываем порт
+EXPOSE 8080
+
+# Запускаем webhook сервер
+CMD ["python", "webhook_server.py"]

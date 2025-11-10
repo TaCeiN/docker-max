@@ -1,0 +1,30 @@
+import React from 'react'
+
+interface PlusIconProps {
+  width?: number | string
+  height?: number | string
+  color?: string
+}
+
+export const PlusIcon: React.FC<PlusIconProps> = ({ 
+  width = 25, 
+  height = 25,
+  color = 'currentColor'
+}) => {
+  const uniqueId = React.useId()
+  const patternId = `pattern-plus-${uniqueId}`
+  const imageId = `image-plus-${uniqueId}`
+  
+  return (
+    <svg width={width} height={height} viewBox="0 0 25 25" fill="none" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink">
+      <rect y="12.3198" width="17.4228" height="17.4228" transform="rotate(-45 0 12.3198)" fill={`url(#${patternId})`}/>
+      <defs>
+        <pattern id={patternId} patternContentUnits="objectBoundingBox" width="1" height="1">
+          <use xlinkHref={`#${imageId}`} transform="scale(0.0111111)"/>
+        </pattern>
+        <image id={imageId} width="90" height="90" preserveAspectRatio="none" xlinkHref="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFoAAABaCAYAAAA4qEECAAAACXBIWXMAAAsTAAALEwEAmpwYAAAB4UlEQVR4nO2cW2rDQBAE9RXn5FHOk49FF8rjFh0EChgcQmztzHbPdoEhX6GmsPXA8iyLMcYYY4wxxhhjjLkBwAXAK4DP47X/fVlEgII/gCcAb7hlA/C8kCPh/4ckn6yq/z8keWRV/e+QpIwt4f+AJFVsCf/j7NzwOG3k2VzG/7jsOUsbEbtD5B/WDNn9GrMHW+Zh5MTh4je+lEKnxe4ceed9SZBe0ZcWeRjpeLi45iXKN1q8RcRWcs36KHY/jCg4yg8CYrcyA4HQqQtMg4HIJQSGAUHgkMLIQTFL5JEDY7bIIwbHrJEzA2D2yBkh4Mhpt8At4H9yfeN9L0Hvvp7ovpOFYm9lIhPH3spFJoxdNzJR7PqRCWLPE3lg7PkiD4g9b+TE2I6cENuRr3HoBOBDRzzwyTAe+PIuHviGJR74FnyKyPVjgydy3djgi1wvNnHkOrH95WwCftwgAT9Ak4AfCUvADzkm4Md2E2AYFAQOoTANCCKXrjAOBkKnUzAPBGK3coNAwLHMz34h5Bq1r0P9R/dS+zqU10hI7evYhBejyOzraOKrfiT2dTQvr6q0zqyKv8SCvir+Eisnq/hLLFGt4i+xFriK/3E23y/9Po7XqvTNMsT9jTHGGGOMMcYYY5ZEvgGYmrPrcMYVcQAAAABJRU5ErkJggg=="/>
+      </defs>
+    </svg>
+  )
+}
+
