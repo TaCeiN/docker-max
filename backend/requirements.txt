@@ -1,0 +1,19 @@
+# Core framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Data validation and ORM
+pydantic==2.10.4
+SQLAlchemy==2.0.36
+
+# Authentication (JWT tokens)
+python-jose[cryptography]==3.3.0
+
+# File uploads (required by FastAPI for form data)
+python-multipart==0.0.12
+
+# HTTP requests (for webhook subscription)
+requests==2.32.3
+
+# Task scheduler for notifications
+APScheduler==3.10.4

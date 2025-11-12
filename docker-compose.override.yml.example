@@ -1,0 +1,22 @@
+# Пример файла для переопределения настроек docker-compose
+# Скопируйте этот файл в docker-compose.override.yml для локальной разработки
+
+version: '3.8'
+
+services:
+  backend:
+    environment:
+      - SECRET_KEY=your-secret-key-here
+    volumes:
+      # Раскомментируйте для разработки с hot-reload
+      # - ./backend:/app
+      # - /app/__pycache__
+
+  frontend:
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    # Раскомментируйте для разработки с hot-reload
+    # volumes:
+    #   - ./frontend:/app
+    #   - /app/node_modules
+

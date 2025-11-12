@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # Nginx Reverse Proxy с автоматическим SSL
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:latest
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - nginx-certs:/etc/nginx/certs:ro
+      - nginx-vhost:/etc/nginx/vhost.d
+      - nginx-html:/usr/share/nginx/html
+    restart: unless-stopped
+    networks:
+      - unitask-network
+    labels:
+      - "com.github.nginx-proxy.nginx-proxy.nginx-config-auto-reload=true"
+
+  # Let's Encrypt Companion для автоматического получения и обновления SSL сертификатов
+  letsencrypt:
+    image: nginxproxy/acme-companion:latest
+    container_name: nginx-letsencrypt
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nginx-certs:/etc/nginx/certs:rw
+      - nginx-vhost:/etc/nginx/vhost.d
+      - nginx-html:/usr/share/nginx/html
+    environment:
+      - DEFAULT_EMAIL=${LETSENCRYPT_EMAIL:-your-email@example.com}
+      - NGINX_PROXY_CONTAINER=nginx-proxy
+    depends_on:
+      - nginx-proxy
+    restart: unless-stopped
+    networks:
+      - unitask-network
+
+  # Backend API сервер
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: unitask-backend
+    expose:
+      - "8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/data.sqlite3}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-180}
+      - MAX_BOT_TOKEN=${MAX_BOT_TOKEN}
+      # Настройки для nginx-proxy (автоматический reverse proxy и SSL)
+      - VIRTUAL_HOST=${BACKEND_DOMAIN}
+      - VIRTUAL_PORT=8000
+      - LETSENCRYPT_HOST=${BACKEND_DOMAIN}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-your-email@example.com}
+    volumes:
+      - backend-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - nginx-proxy
+      - letsencrypt
+    networks:
+      - unitask-network
+
+  # Webhook сервер
+  webhook:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.webhook
+    container_name: unitask-webhook
+    expose:
+      - "8080"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/data.sqlite3}
+      - MAX_BOT_TOKEN=${MAX_BOT_TOKEN}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - WEBHOOK_PORT=8080
+      - WEBHOOK_HOST=0.0.0.0
+      # Настройки для nginx-proxy (автоматический reverse proxy и SSL)
+      - VIRTUAL_HOST=${WEBHOOK_DOMAIN}
+      - VIRTUAL_PORT=8080
+      - LETSENCRYPT_HOST=${WEBHOOK_DOMAIN}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-your-email@example.com}
+    volumes:
+      - backend-data:/app/data
+    depends_on:
+      - backend
+      - nginx-proxy
+      - letsencrypt
+    restart: unless-stopped
+    networks:
+      - unitask-network
+
+  # Frontend сборка для ручного деплоя
+  frontend-build:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.build
+      args:
+        - VITE_API_URL=${BACKEND_URL}
+    container_name: unitask-frontend-build
+    environment:
+      - VITE_API_URL=${BACKEND_URL}
+    volumes:
+      - frontend-build:/app/dist
+    restart: "no"
+    networks:
+      - unitask-network
+
+volumes:
+  backend-data:
+    driver: local
+  frontend-build:
+    driver: local
+  nginx-certs:
+    driver: local
+  nginx-vhost:
+    driver: local
+  nginx-html:
+    driver: local
+
+networks:
+  unitask-network:
+    driver: bridge

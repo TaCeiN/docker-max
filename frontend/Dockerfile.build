@@ -1,0 +1,26 @@
+# Dockerfile для сборки фронтенда (вариант 2 - ручной деплой)
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Копируем package файлы
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm ci
+
+# Копируем исходный код
+COPY . .
+
+# Аргумент для API URL (передается при сборке)
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+
+# Собираем приложение
+RUN npm run build
+
+# Создаем volume для сохранения собранных файлов
+VOLUME ["/app/dist"]
+
+# Команда для копирования файлов (будет выполнена в docker-compose)
+CMD ["sh", "-c", "echo 'Build completed. Files are in /app/dist volume.' && ls -la /app/dist"]

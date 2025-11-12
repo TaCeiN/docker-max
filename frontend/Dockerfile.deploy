@@ -1,0 +1,37 @@
+# Dockerfile для деплоя фронтенда на GitHub Pages (вариант 1)
+FROM node:20-alpine
+
+# Устанавливаем git и другие необходимые инструменты
+RUN apk add --no-cache git openssh
+
+WORKDIR /app
+
+# Копируем package файлы
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm ci
+
+# Копируем исходный код
+COPY . .
+
+# Аргументы для деплоя (передаются при сборке)
+ARG VITE_API_URL
+ARG GITHUB_REPO=tacein/tacein.github.io
+ARG GITHUB_USER=tacein
+ARG GITHUB_EMAIL
+
+# Переменные окружения (будут переопределены через environment в docker-compose)
+ENV VITE_API_URL=${VITE_API_URL}
+ENV GITHUB_REPO=${GITHUB_REPO}
+ENV GITHUB_USER=${GITHUB_USER}
+ENV GITHUB_EMAIL=${GITHUB_EMAIL}
+# GITHUB_TOKEN передается только через environment, не через ARG (безопасность)
+
+# Копируем скрипт деплоя
+COPY deploy.sh /app/deploy.sh
+RUN chmod +x /app/deploy.sh
+
+# Запускаем деплой (GITHUB_TOKEN будет передан через environment)
+CMD ["/app/deploy.sh"]
+
