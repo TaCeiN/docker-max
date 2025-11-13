@@ -1,3 +1,5 @@
+import time
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -103,7 +105,6 @@ def _parse_init_data(raw: str) -> Dict[str, Any]:
 
 @router.post("/webapp-init", response_model=Token)
 def auth_webapp(body: WebAppInit, db: Session = Depends(get_db)):
-    import logging
     logger = logging.getLogger(__name__)
     
     data = _parse_init_data(body.initData)
@@ -169,8 +170,22 @@ def auth_webapp(body: WebAppInit, db: Session = Depends(get_db)):
     
     logger.info(f"Extracted user: id={user_id}, username={username}, name={full_name}")
 
-    # Сначала проверяем, есть ли пользователь в БД (сохранен при bot_started)
-    existing = db.query(User).filter(User.uuid == uuid).first()
+    # --- FIX: Повторные попытки для решения race condition ---
+    # Проблема: webhook-сервер и API-сервер работают в разных процессах.
+    # bot_started создает юзера через webhook, а фронтенд почти одновременно стучится в /webapp-init.
+    # Из-за задержки репликации или транзакции, /webapp-init может не найти юзера и попытаться создать своего,
+    # что вызовет ошибку уникальности (конфликт по uuid).
+    # Решение: сделать несколько попыток с небольшой задержкой, чтобы дать webhook-серверу время.
+    
+    existing = None
+    for attempt in range(5):  # 5 попыток
+        existing = db.query(User).filter(User.uuid == uuid).first()
+        if existing:
+            logger.info(f"✅ User found on attempt {attempt + 1}")
+            break
+        logger.warning(f"User not found on attempt {attempt + 1}. Retrying in 0.5s...")
+        time.sleep(0.5)  # задержка 0.5 секунды
+    # ---------------------------------------------------------
     
     if existing:
         # Пользователь уже есть в БД (был сохранен при bot_started через вебхук)
@@ -198,6 +213,7 @@ def auth_webapp(body: WebAppInit, db: Session = Depends(get_db)):
 
     # если юзера нет в БД — создаем (fallback, если вебхук не пришел)
     # дополнительно проверим уникальность username
+    logger.warning("User not found after all retries. Creating a new user as a fallback.")
     if db.query(User).filter(User.username == username).first() is not None:
         # если конфликт — добавим суффикс
         username = f"{username}_{user_id}"
