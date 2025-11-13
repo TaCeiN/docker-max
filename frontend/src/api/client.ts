@@ -42,11 +42,15 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     console.log(`[API] Response headers:`, Object.fromEntries(res.headers.entries()))
     
     if (!res.ok) {
+      // Только при 401 (Unauthorized) удаляем токен и редиректим на логин
+      // При других ошибках (502, 503, network errors) не удаляем токен,
+      // чтобы пользователь мог видеть сообщение об ошибке подключения
       if (res.status === 401) {
         localStorage.removeItem('token')
         if (window.location.pathname !== '/login') {
           window.location.href = '/login'
         }
+        throw new Error('Неавторизован')
       }
       
       // Специальная обработка 502 Bad Gateway
@@ -57,7 +61,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
         console.error('[API] 2. Nginx не может подключиться к бэкенду')
         console.error('[API] 3. Бэкенд перегружен или не отвечает')
         console.error('[API] 4. Проблемы с сетью между nginx и бэкендом')
-        throw new Error('Сервер временно недоступен (502 Bad Gateway). Пожалуйста, попробуйте позже или перезагрузите мини-приложение.')
+        throw new Error('Сервер временно недоступен (502 Bad Gateway). Пожалуйста, попробуйте позже.')
+      }
+      
+      // Обработка 503 Service Unavailable
+      if (res.status === 503) {
+        console.error(`[API] 503 Service Unavailable при запросе к ${url}`)
+        throw new Error('Сервис временно недоступен. Пожалуйста, попробуйте позже.')
       }
       
       let errorMessage = 'Ошибка запроса'
@@ -103,6 +113,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     return data
   } catch (error) {
     // Обработка сетевых ошибок (бэкенд недоступен)
+    // НЕ удаляем токен при сетевых ошибках - пользователь авторизован, просто нет подключения
     if (
       error instanceof TypeError && 
       (error.message.includes('fetch') || 
@@ -111,7 +122,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
        error.message.includes('network'))
     ) {
       console.error(`[API] Network error: Cannot connect to ${url}`)
-      throw new Error(`Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен на ${API_URL}`)
+      throw new Error('Нет подключения к базе данных. Пожалуйста, попробуйте позже.')
     }
     // Обработка других сетевых ошибок
     if (error instanceof Error && (
@@ -120,7 +131,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       error.message.includes('Network request failed')
     )) {
       console.error(`[API] Network error: Cannot connect to ${url}`)
-      throw new Error(`Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен на ${API_URL}`)
+      throw new Error('Нет подключения к базе данных. Пожалуйста, попробуйте позже.')
     }
     throw error
   }
@@ -187,6 +198,31 @@ export async function toggleDeadlineNotifications(noteId: number) {
 export async function testDeadlineNotification(noteId: number) {
   return api<{ ok: boolean; message: string }>(`/api/deadlines/${noteId}/notifications/test`, {
     method: "POST",
+  })
+}
+
+export interface UserSettings {
+  id: number
+  user_id: number
+  language: 'ru' | 'en'
+  theme: 'light' | 'dark'
+  notification_times_minutes: number[]  // Массив минут до дедлайна (до 10 штук)
+}
+
+export interface UserSettingsUpdate {
+  language?: 'ru' | 'en'
+  theme?: 'light' | 'dark'
+  notification_times_minutes?: number[]  // Массив минут до дедлайна (до 10 штук)
+}
+
+export async function getUserSettings(): Promise<UserSettings> {
+  return api<UserSettings>('/api/settings')
+}
+
+export async function updateUserSettings(settings: UserSettingsUpdate): Promise<UserSettings> {
+  return api<UserSettings>('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings)
   })
 }
 

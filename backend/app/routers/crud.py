@@ -697,15 +697,27 @@ def _calculate_deadline_info(deadline_at: datetime) -> dict:
             time_remaining_text = "сегодня"
         else:
             status = "today"
-            time_remaining_text = f"сегодня ({total_hours} ч.)"
+            remaining_mins = total_minutes % 60
+            if remaining_mins > 0:
+                time_remaining_text = f"сегодня ({total_hours} ч. {remaining_mins} мин.)"
+            else:
+                time_remaining_text = f"сегодня ({total_hours} ч.)"
     else:
         status = "active"
+        remaining_hours = total_hours % 24
+        remaining_mins = total_minutes % 60
+        
         if days_remaining == 1:
             time_remaining_text = "1 день"
         elif 2 <= days_remaining <= 4:
             time_remaining_text = f"{days_remaining} дня"
         else:
             time_remaining_text = f"{days_remaining} дней"
+        
+        if remaining_hours > 0:
+            time_remaining_text += f" {remaining_hours} {'час' if remaining_hours == 1 else 'часа' if 2 <= remaining_hours <= 4 else 'часов'}"
+        if remaining_mins > 0:
+            time_remaining_text += f" {remaining_mins} {'минута' if remaining_mins == 1 else 'минуты' if 2 <= remaining_mins <= 4 else 'минут'}"
     
     return {
         "days_remaining": days_remaining,
@@ -849,6 +861,9 @@ def update_deadline(note_id: int, payload: DeadlineUpdate, db: Session = Depends
     if deadline is None:
         raise HTTPException(status_code=404, detail="Дедлайн не найден")
     
+    # Сохраняем старое время дедлайна для проверки изменений
+    old_deadline_at = deadline.deadline_at
+    
     # Обновляем поля
     if payload.deadline_at is not None:
         try:
@@ -866,7 +881,35 @@ def update_deadline(note_id: int, payload: DeadlineUpdate, db: Session = Depends
             raise HTTPException(status_code=400, detail=f"Неверный формат даты: {e}")
     
     if payload.notification_enabled is not None:
+        old_notification_enabled = deadline.notification_enabled
         deadline.notification_enabled = payload.notification_enabled
+        
+        # Если уведомления были включены, удаляем старые уведомления для пересчета
+        if payload.notification_enabled and not old_notification_enabled:
+            from ..models.todo import DeadlineNotification
+            db.query(DeadlineNotification).filter(
+                DeadlineNotification.deadline_id == deadline.id,
+                DeadlineNotification.notification_type != "expired"
+            ).delete(synchronize_session=False)
+    
+    # Если время дедлайна изменилось, удаляем все существующие уведомления (кроме expired)
+    # чтобы система могла пересчитать их с новым временем
+    if payload.deadline_at is not None:
+        # Сравниваем время, учитывая timezone
+        old_time = old_deadline_at
+        new_time = deadline.deadline_at
+        # Приводим к UTC для сравнения
+        if old_time.tzinfo is None:
+            old_time = old_time.replace(tzinfo=timezone.utc)
+        if new_time.tzinfo is None:
+            new_time = new_time.replace(tzinfo=timezone.utc)
+        # Сравниваем с точностью до секунды
+        if abs((old_time - new_time).total_seconds()) > 1:
+            from ..models.todo import DeadlineNotification
+            db.query(DeadlineNotification).filter(
+                DeadlineNotification.deadline_id == deadline.id,
+                DeadlineNotification.notification_type != "expired"
+            ).delete(synchronize_session=False)
     
     db.commit()
     db.refresh(deadline)
@@ -927,7 +970,16 @@ def toggle_deadline_notifications(note_id: int, db: Session = Depends(get_db), u
         raise HTTPException(status_code=404, detail="Дедлайн не найден")
     
     # Переключаем подписку
+    old_notification_enabled = deadline.notification_enabled
     deadline.notification_enabled = not deadline.notification_enabled
+    
+    # Если уведомления были включены, удаляем старые уведомления для пересчета
+    if deadline.notification_enabled and not old_notification_enabled:
+        from ..models.todo import DeadlineNotification
+        db.query(DeadlineNotification).filter(
+            DeadlineNotification.deadline_id == deadline.id,
+            DeadlineNotification.notification_type != "expired"
+        ).delete(synchronize_session=False)
     
     db.commit()
     db.refresh(deadline)

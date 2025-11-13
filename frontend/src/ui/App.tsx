@@ -1,7 +1,9 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import ProtectedRoute from './components/ProtectedRoute'
+import DatabaseConnectionError from './components/DatabaseConnectionError'
 import { useNotesContext } from './contexts/NotesContext'
+import { api } from '../api/client'
 import { HomeIcon } from '../assets/icons/HomeIcon'
 import { NotesIcon } from '../assets/icons/NotesIcon'
 import { SettingsIcon } from '../assets/icons/SettingsIcon'
@@ -10,10 +12,15 @@ import { SettingsIcon } from '../assets/icons/SettingsIcon'
 export const saveNoteRefGlobal = { current: null as (() => Promise<void>) | null }
 
 export default function App() {
+  // Загружаем тему из localStorage или используем dark по умолчанию
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'dark')
   const location = useLocation()
   const navigate = useNavigate()
   const { isNoteEditorOpen, closeNoteEditor, handleSaveNote } = useNotesContext()
+  
+  // Состояние для проверки доступности бэкенда
+  const [isBackendAvailable, setIsBackendAvailable] = useState<boolean | null>(null)
+  const [isCheckingBackend, setIsCheckingBackend] = useState(false)
   
   // Флаг для предотвращения множественных вызовов сохранения
   const isSavingRef = useRef(false)
@@ -35,17 +42,69 @@ export default function App() {
     }
   }, [closeNoteEditor, handleSaveNote])
 
-  // Принудительно устанавливаем темную тему для нового дизайна
+  // Загружаем тему из localStorage при старте (тема больше не управляется через настройки)
   useEffect(() => {
-    if (theme !== 'dark') {
-      setTheme('dark')
-    }
-  }, [theme])
+    const savedTheme = (localStorage.getItem('theme') || 'dark') as 'light' | 'dark'
+    setTheme(savedTheme)
+    document.documentElement.setAttribute('data-theme', savedTheme)
+  }, [])
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
+    document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  // Проверка доступности бэкенда при монтировании и периодически
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      // Если токена нет, не проверяем бэкенд
+      setIsBackendAvailable(null)
+      return
+    }
+
+    let isMounted = true
+    let intervalId: ReturnType<typeof setInterval> | null = null
+    let checkingRef = false
+
+    const checkBackend = async () => {
+      if (checkingRef) return
+      
+      checkingRef = true
+      setIsCheckingBackend(true)
+      try {
+        await api('/health')
+        if (isMounted) {
+          setIsBackendAvailable(true)
+        }
+      } catch (error) {
+        console.warn('[App] Бэкенд недоступен:', error)
+        if (isMounted) {
+          setIsBackendAvailable(false)
+        }
+      } finally {
+        checkingRef = false
+        if (isMounted) {
+          setIsCheckingBackend(false)
+        }
+      }
+    }
+
+    // Проверяем сразу при монтировании
+    checkBackend()
+
+    // Проверяем каждые 5 секунд
+    intervalId = setInterval(() => {
+      checkBackend()
+    }, 5000)
+
+    return () => {
+      isMounted = false
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, []) // Пустой массив зависимостей - проверяем только при монтировании
 
   // Функция для сохранения заметки перед навигацией
   // ПРИНУДИТЕЛЬНО пытается сохранить заметку, даже если редактор закрыт
@@ -172,9 +231,16 @@ export default function App() {
   )
 
   const isLoginPage = location.pathname === '/login'
+  const token = localStorage.getItem('token')
   
   if (isLoginPage) {
     return <Outlet />
+  }
+
+  // Если пользователь авторизован (есть токен), но бэкенд недоступен,
+  // показываем сообщение об ошибке подключения вместо редиректа на логин
+  if (token && isBackendAvailable === false) {
+    return <DatabaseConnectionError />
   }
 
   return (

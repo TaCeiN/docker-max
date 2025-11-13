@@ -11,13 +11,14 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models.todo import Deadline, DeadlineNotification, Note
 from ..models.user import User
+from ..models.user_settings import UserSettings
 from .bot_service import send_message_to_user
 from .message_tracker import track_message
 
 logger = logging.getLogger(__name__)
 
-# Градация уведомлений в минутах
-NOTIFICATION_GRADATIONS = [
+# Градация уведомлений по умолчанию (если у пользователя нет настроек)
+DEFAULT_NOTIFICATION_GRADATIONS = [
     (14 * 24 * 60, "14d", "14 дней"),
     (7 * 24 * 60, "7d", "7 дней"),
     (3 * 24 * 60, "3d", "3 дня"),
@@ -46,10 +47,24 @@ def format_time_remaining(minutes: int) -> str:
     """Форматирует оставшееся время в читаемый формат."""
     if minutes >= 24 * 60:
         days = minutes // (24 * 60)
-        return f"{days} {'день' if days == 1 else 'дня' if 2 <= days <= 4 else 'дней'}"
+        remaining_minutes = minutes % (24 * 60)
+        hours = remaining_minutes // 60
+        mins = remaining_minutes % 60
+        
+        result = f"{days} {'день' if days == 1 else 'дня' if 2 <= days <= 4 else 'дней'}"
+        if hours > 0:
+            result += f" {hours} {'час' if hours == 1 else 'часа' if 2 <= hours <= 4 else 'часов'}"
+        if mins > 0:
+            result += f" {mins} {'минута' if mins == 1 else 'минуты' if 2 <= mins <= 4 else 'минут'}"
+        return result
     elif minutes >= 60:
         hours = minutes // 60
-        return f"{hours} {'час' if hours == 1 else 'часа' if 2 <= hours <= 4 else 'часов'}"
+        mins = minutes % 60
+        
+        result = f"{hours} {'час' if hours == 1 else 'часа' if 2 <= hours <= 4 else 'часов'}"
+        if mins > 0:
+            result += f" {mins} {'минута' if mins == 1 else 'минуты' if 2 <= mins <= 4 else 'минут'}"
+        return result
     else:
         return f"{minutes} {'минута' if minutes == 1 else 'минуты' if 2 <= minutes <= 4 else 'минут'}"
 
@@ -156,6 +171,31 @@ def check_and_send_notifications():
                 if not user:
                     continue
                 
+                # Получаем настройки пользователя для времен уведомлений
+                user_settings = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
+                if user_settings and user_settings.notification_times_minutes:
+                    # Используем настройки пользователя
+                    notification_times = sorted(user_settings.notification_times_minutes, reverse=True)  # От больших к меньшим
+                    # Создаем градации из настроек пользователя
+                    notification_gradations = []
+                    for minutes in notification_times:
+                        # Генерируем тип уведомления и текст
+                        if minutes >= 24 * 60:
+                            days = minutes // (24 * 60)
+                            notification_type = f"{days}d"
+                            time_text = format_time_remaining(minutes)
+                        elif minutes >= 60:
+                            hours = minutes // 60
+                            notification_type = f"{hours}h"
+                            time_text = format_time_remaining(minutes)
+                        else:
+                            notification_type = f"{minutes}m"
+                            time_text = format_time_remaining(minutes)
+                        notification_gradations.append((minutes, notification_type, time_text))
+                else:
+                    # Используем градации по умолчанию
+                    notification_gradations = DEFAULT_NOTIFICATION_GRADATIONS
+                
                 # Вычисляем оставшееся время в минутах
                 time_until = get_time_until_deadline(deadline.deadline_at)
                 minutes_remaining = int(time_until.total_seconds() / 60)
@@ -174,7 +214,7 @@ def check_and_send_notifications():
                 
                 # Проверяем каждую градацию (от больших к меньшим)
                 # Отправляем уведомление для первой подходящей градации, которая еще не была отправлена
-                for minutes_threshold, notification_type, time_text in NOTIFICATION_GRADATIONS:
+                for minutes_threshold, notification_type, time_text in notification_gradations:
                     # Пропускаем, если уведомление этого типа уже было отправлено
                     if notification_type in sent_notifications:
                         continue

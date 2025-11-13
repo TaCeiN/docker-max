@@ -1,4 +1,36 @@
 /**
+ * Ожидает загрузки Max WebApp SDK и получения initData
+ * Делает повторные попытки с интервалом
+ */
+async function waitForInitData(maxAttempts: number = 10, intervalMs: number = 500): Promise<string | null> {
+  const w = window as any
+  
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    console.log(`[waitForInitData] Попытка ${attempt + 1}/${maxAttempts}`)
+    
+    // Проверяем все возможные источники
+    const initData = getInitData()
+    if (initData) {
+      console.log(`[waitForInitData] ✅ initData найден на попытке ${attempt + 1}`)
+      return initData
+    }
+    
+    // Проверяем, загружается ли SDK
+    if (w?.MaxWebApp || w?.Telegram?.WebApp || w?.Max?.WebApp) {
+      console.log(`[waitForInitData] SDK обнаружен, но initData еще нет, ждем...`)
+    }
+    
+    // Если это не последняя попытка, ждем перед следующей
+    if (attempt < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs))
+    }
+  }
+  
+  console.log(`[waitForInitData] ❌ initData не найден после ${maxAttempts} попыток`)
+  return null
+}
+
+/**
  * Получает initData из различных источников Max WebApp
  * Max открывает мини-приложение как обычную веб-страницу и передает данные через:
  * 1. URL параметры (?initData=... или другие параметры)
@@ -146,17 +178,26 @@ function extractUserIdFromInitData(initData: string): number | null {
   }
 }
 
-export async function autoLogin(): Promise<boolean> {
+export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
   console.log('[autoLogin] ========================================')
   console.log('[autoLogin] 🚀 Запуск autoLogin()')
   console.log('[autoLogin] ========================================')
   
   try {
-    let initData = getInitData()
+    let initData: string | null = null
     
-    // Для dev режима: если initData не найден, пробуем использовать mock данные
+    // Сначала пробуем получить сразу
+    initData = getInitData()
+    
+    // Если не найден и нужно ждать, делаем повторные попытки
+    if (!initData && waitForData) {
+      console.log('[autoLogin] ⚠️ initData не найден сразу, ожидаем загрузки SDK...')
+      initData = await waitForInitData(10, 500) // 10 попыток по 500ms = до 5 секунд
+    }
+    
+    // Для dev режима: если initData все еще не найден, пробуем использовать mock данные
     if (!initData) {
-      console.log('[autoLogin] ⚠️ initData не найден')
+      console.log('[autoLogin] ⚠️ initData не найден после ожидания')
       console.log('[autoLogin] Пробуем использовать сохраненные данные для тестирования...')
       
       // Пробуем получить user_id из localStorage (если был сохранен ранее)

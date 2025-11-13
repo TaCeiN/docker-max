@@ -25,12 +25,13 @@ export default function Login() {
       return
     }
     
-    // Пытаемся автоматически залогиниться
-    console.log('[Login] Токена нет, пытаемся autoLogin...')
+    // Пытаемся автоматически залогиниться с ожиданием SDK
+    console.log('[Login] Токена нет, пытаемся autoLogin с ожиданием SDK...')
     let canceled = false
     ;(async () => {
       try {
-        const ok = await autoLogin()
+        // Ждем загрузки SDK и initData (до 5 секунд)
+        const ok = await autoLogin(true)
         if (!canceled && ok) {
           console.log('[Login] autoLogin успешен, перенаправляем на главную')
           navigate('/')

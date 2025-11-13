@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NotesProvider } from './ui/contexts/NotesContext'
 import { DialogProvider } from './ui/contexts/DialogContext'
+import { LanguageProvider } from './ui/contexts/LanguageContext'
 import App from './ui/App'
 import Login from './ui/pages/Login'
 import Dashboard from './ui/pages/Dashboard'
@@ -67,6 +68,42 @@ if (w?.MaxWebApp) {
   }
 }
 
+// Глобальный флаг для отслеживания, была ли уже попытка авторизации
+let authAttempted = false
+
+// Функция для попытки авторизации, если токена еще нет
+async function tryAutoLoginIfNeeded() {
+  if (localStorage.getItem('token')) {
+    console.log('[App] Токен уже есть, пропускаем авторизацию')
+    return
+  }
+  
+  if (authAttempted) {
+    console.log('[App] Авторизация уже была попытка, пропускаем')
+    return
+  }
+  
+  authAttempted = true
+  console.log('[App] Пытаемся авторизоваться...')
+  
+  try {
+    const ok = await autoLogin(true) // Ждем загрузки SDK
+    if (ok) {
+      console.log('[App] ✅ Авторизация успешна из postMessage/SDK')
+      // Если мы на странице логина, перенаправляем на главную
+      if (window.location.pathname === '/login') {
+        window.location.href = '/'
+      }
+    } else {
+      console.log('[App] ⚠️ Авторизация не удалась, но это нормально - будет повторная попытка')
+      authAttempted = false // Разрешаем повторную попытку
+    }
+  } catch (e) {
+    console.error('[App] ❌ Ошибка при авторизации:', e)
+    authAttempted = false // Разрешаем повторную попытку при ошибке
+  }
+}
+
 // Слушаем postMessage от родительского окна Max (если открыто в iframe)
 if (window.parent !== window) {
   console.log('[App] Приложение открыто в iframe, слушаем postMessage от Max...')
@@ -81,58 +118,64 @@ if (window.parent !== window) {
         // Сохраняем во временное хранилище
         sessionStorage.setItem('initData_from_postMessage', event.data.initData)
         // Пробуем авторизоваться
-        if (!localStorage.getItem('token')) {
-          autoLogin().catch(e => console.error('[App] Ошибка autoLogin из postMessage:', e))
-        }
+        tryAutoLoginIfNeeded()
       } else if (event.data.user_id) {
         console.log('[App] ✅ Найден user_id в postMessage, формируем initData...')
         const initData = `user_id=${event.data.user_id}&first_name=${event.data.first_name || ''}&last_name=${event.data.last_name || ''}`
         sessionStorage.setItem('initData_from_postMessage', initData)
-        if (!localStorage.getItem('token')) {
-          autoLogin().catch(e => console.error('[App] Ошибка autoLogin из postMessage:', e))
-        }
+        tryAutoLoginIfNeeded()
       }
     } else if (typeof event.data === 'string' && (event.data.includes('user_id') || event.data.includes('initData'))) {
       console.log('[App] ✅ Найдены данные в postMessage (строка)')
       sessionStorage.setItem('initData_from_postMessage', event.data)
-      if (!localStorage.getItem('token')) {
-        autoLogin().catch(e => console.error('[App] Ошибка autoLogin из postMessage:', e))
-      }
+      tryAutoLoginIfNeeded()
     }
   })
 }
 
-// Пробуем автоматически залогиниться при загрузке приложения (если нет токена)
-if (!localStorage.getItem('token')) {
-  console.log('[App] Токена нет, пытаемся autoLogin при загрузке...')
-  // Небольшая задержка, чтобы postMessage успел прийти
-  setTimeout(() => {
-    autoLogin().then(ok => {
-      if (ok) {
-        console.log('[App] ✅ autoLogin успешен при загрузке приложения')
-        // Перезагружаем страницу, чтобы роутер перенаправил на главную
-        if (window.location.pathname === '/login') {
-          window.location.href = '/'
-        }
-      } else {
-        console.log('[App] ⚠️ autoLogin не удался при загрузке приложения')
-      }
-    }).catch(e => {
-      console.error('[App] ❌ Ошибка в autoLogin при загрузке:', e)
-    })
-  }, 500) // Даем 500ms на получение postMessage
-} else {
-  console.log('[App] Токен уже есть в localStorage, пропускаем autoLogin')
-}
+// Слушаем изменения в Max WebApp SDK (если SDK загружается асинхронно)
+let lastInitData: string | null = null
+
+// Проверяем появление initData в SDK с интервалом
+const checkSDKInterval = setInterval(() => {
+  if (localStorage.getItem('token')) {
+    clearInterval(checkSDKInterval)
+    return
+  }
+  
+  const currentInitData = w?.MaxWebApp?.initData || 
+                         w?.Telegram?.WebApp?.initData || 
+                         w?.Max?.WebApp?.initData
+  
+  if (currentInitData && currentInitData !== lastInitData) {
+    console.log('[App] ✅ initData появился в SDK!')
+    lastInitData = currentInitData
+    tryAutoLoginIfNeeded()
+    // Останавливаем проверку после успешной авторизации или через 10 секунд
+    setTimeout(() => clearInterval(checkSDKInterval), 10000)
+  }
+}, 500) // Проверяем каждые 500ms
+
+// Останавливаем проверку через 10 секунд
+setTimeout(() => {
+  clearInterval(checkSDKInterval)
+  console.log('[App] Остановлена проверка SDK (прошло 10 секунд)')
+}, 10000)
+
+// НЕ вызываем autoLogin здесь - это будет сделано в ProtectedRoute или Login
+// Это предотвращает дублирующие вызовы и гонки условий
+console.log('[App] Токен в localStorage:', localStorage.getItem('token') ? 'есть' : 'нет')
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <DialogProvider>
-      <NotesProvider>
-        <RouterProvider router={router} />
-      </NotesProvider>
-      </DialogProvider>
+      <LanguageProvider>
+        <DialogProvider>
+          <NotesProvider>
+            <RouterProvider router={router} />
+          </NotesProvider>
+        </DialogProvider>
+      </LanguageProvider>
     </QueryClientProvider>
   </React.StrictMode>
 )

@@ -154,3 +154,21 @@ class DeadlineOut(BaseModel):
     class Config:
         from_attributes = True
 
+
+# User Settings
+class UserSettingsOut(BaseModel):
+    id: int
+    user_id: int
+    language: str  # "ru" or "en"
+    theme: str  # "light" or "dark"
+    notification_times_minutes: list[int]  # Массив минут до дедлайна для уведомлений (до 10 штук)
+
+    class Config:
+        from_attributes = True
+
+
+class UserSettingsUpdate(BaseModel):
+    language: str | None = None  # "ru" or "en"
+    theme: str | None = None  # "light" or "dark"
+    notification_times_minutes: list[int] | None = None  # Массив минут до дедлайна (до 10 штук)
+

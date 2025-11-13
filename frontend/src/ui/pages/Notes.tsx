@@ -9,7 +9,6 @@ import { FolderIcon } from '../../assets/icons/FolderIcon'
 import { PlusIcon } from '../../assets/icons/PlusIcon'
 import { TrashIcon } from '../../assets/icons/TrashIcon'
 import { DocumentIcon } from '../../assets/icons/DocumentIcon'
-import { LightningIcon } from '../../assets/icons/LightningIcon'
 import { AlarmIcon } from '../../assets/icons/AlarmIcon'
 import { BellIcon } from '../../assets/icons/BellIcon'
 import DeadlineModal from '../components/DeadlineModal'
@@ -411,6 +410,7 @@ export default function Notes() {
     tagIdFromUrl ? parseInt(tagIdFromUrl) : null
   )
   const [showFolderSelect, setShowFolderSelect] = useState(false)
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false)
   const [previousView, setPreviousView] = useState<'folders' | 'folder' | 'search' | 'tag' | null>(null)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [showSaveNotification, setShowSaveNotification] = useState(false)
@@ -1990,24 +1990,89 @@ export default function Notes() {
             />
           </div>
           
-          <div className="note-tags-input-wrapper">
+          <div className="note-tags-input-wrapper" style={{ position: 'relative' }}>
             <input
               type="text"
               className="note-tags-input"
               placeholder="Введите тег (например: #для_самореализации)"
               value={tagsText}
               onChange={e => {
-                const value = e.target.value
-                setTagsText(value === '' ? '' : normalizeTagInput(value))
+                const rawValue = e.target.value
+                
+                // Если пользователь удаляет символы (длина уменьшилась), используем сырое значение
+                // Иначе нормализуем
+                const prevLength = tagsText.length
+                const newLength = rawValue.length
+                const isDeleting = newLength < prevLength
+                
+                let finalValue = rawValue
+                if (!isDeleting) {
+                  // Нормализуем только при добавлении символов
+                  finalValue = normalizeTagInput(rawValue)
+                } else {
+                  // При удалении используем сырое значение, но проверяем базовую валидность
+                  // Разрешаем удаление любых символов
+                  finalValue = rawValue
+                }
+                
+                setTagsText(finalValue)
+                
+                // Извлекаем последний тег для фильтрации (после последнего пробела или #)
+                const lastTagMatch = finalValue.match(/#([^\s#]*)$/)
+                const lastTagText = lastTagMatch ? lastTagMatch[1] : ''
+                
+                // Показываем меню, если есть # и есть текст для поиска
+                if (finalValue.includes('#') && lastTagText.length >= 0) {
+                  setShowTagSuggestions(true)
+                } else {
+                  setShowTagSuggestions(false)
+                }
               }}
-              list="tag-suggestions-notes"
+              onFocus={e => {
+                const rawValue = e.target.value
+                const lastTagMatch = rawValue.match(/#([^\s#]*)$/)
+                if (lastTagMatch) {
+                  setShowTagSuggestions(true)
+                }
+              }}
+              onBlur={e => {
+                // Задержка, чтобы можно было кликнуть на предложение
+                setTimeout(() => setShowTagSuggestions(false), 200)
+              }}
             />
+            {showTagSuggestions && tagsText.includes('#') && allAvailableTags.length > 0 && (() => {
+              // Извлекаем последний тег для фильтрации
+              const lastTagMatch = tagsText.match(/#([^\s#]*)$/)
+              const lastTagText = lastTagMatch ? lastTagMatch[1].toLowerCase() : ''
+              
+              // Фильтруем теги по последнему введенному тегу
+              const filteredTags = allAvailableTags.filter(tag => 
+                tag.name.toLowerCase().includes(lastTagText)
+              )
+              
+              return filteredTags.length > 0 ? (
+                <div className="tag-suggestions-menu">
+                  {filteredTags.slice(0, 10).map(tag => (
+                    <div
+                      key={tag.id}
+                      className="tag-suggestion-item"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Находим позицию последнего # и заменяем текст после него
+                        const lastHashIndex = tagsText.lastIndexOf('#')
+                        const beforeLastTag = lastHashIndex >= 0 ? tagsText.substring(0, lastHashIndex) : ''
+                        const newTagsText = beforeLastTag ? `${beforeLastTag} #${tag.name} ` : `#${tag.name} `
+                        setTagsText(newTagsText)
+                        setShowTagSuggestions(false)
+                      }}
+                    >
+                      #{tag.name}
+                    </div>
+                  ))}
+                </div>
+              ) : null
+            })()}
           </div>
-          <datalist id="tag-suggestions-notes">
-            {allAvailableTags.map(tag => (
-              <option key={tag.id} value={`#${tag.name}`} />
-            ))}
-          </datalist>
           
           {isTodoMode ? (
             <TodoList 
@@ -2025,7 +2090,7 @@ export default function Notes() {
             />
           )}
         </div>
-        <div className="notes-inner-nav" data-mobile-nav>
+        <div className={`notes-inner-nav ${showDeadlineModal ? 'notes-inner-nav--deadline-open' : ''}`} data-mobile-nav>
         <div className={`notes-inner-nav-left ${showDeadlineModal ? 'notes-inner-nav-left--deadline' : ''}`}>
           {!showDeadlineModal && (
             <>
@@ -2214,19 +2279,50 @@ export default function Notes() {
                 </svg>
               </span>
             </button>
-            <button 
-              className="inner-nav-item active" 
-              onClick={(e) => {
-                e.stopPropagation()
-                setShowFolderSelect(!showFolderSelect)
-              }}
-            >
-              <span className="inner-nav-icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M3 6C3 5.44772 3.44772 5 4 5H8L10 7H16C16.5523 7 17 7.44772 17 8V15C17 15.5523 16.5523 16 16 16H4C3.44772 16 3 15.5523 3 15V6Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                </svg>
-              </span>
-            </button>
+            <div style={{ position: 'relative' }}>
+              <button 
+                className="inner-nav-item active" 
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowFolderSelect(!showFolderSelect)
+                }}
+              >
+                <span className="inner-nav-icon">
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 6C3 5.44772 3.44772 5 4 5H8L10 7H16C16.5523 7 17 7.44772 17 8V15C17 15.5523 16.5523 16 16 16H4C3.44772 16 3 15.5523 3 15V6Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  </svg>
+                </span>
+              </button>
+              {showFolderSelect && folders && (
+                <>
+                  <div 
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 999
+                    }}
+                    onClick={() => setShowFolderSelect(false)}
+                  />
+                  <div className="folder-select-menu">
+                    {folders.map(folder => (
+                      <div
+                        key={folder.id}
+                        className={`folder-select-item ${noteToShow?.folder_id === folder.id ? 'folder-select-item--active' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleMoveToFolder(folder.id)
+                        }}
+                      >
+                        {folder.name}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             {isNoteTodo && (
               <button
                 className="inner-nav-item"
@@ -2270,65 +2366,6 @@ export default function Notes() {
                   <AlarmIcon width={20} height={20} />
                 </span>
               </button>
-            )}
-            {showFolderSelect && folders && (
-              <>
-                <div 
-                  style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    zIndex: 999
-                  }}
-                  onClick={() => setShowFolderSelect(false)}
-                />
-                <div style={{
-                  position: 'absolute',
-                  bottom: '100%',
-                  left: 0,
-                  marginBottom: '8px',
-                  background: 'var(--bg)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '8px',
-                  padding: '8px',
-                  minWidth: '200px',
-                  maxHeight: '300px',
-                  overflowY: 'auto',
-                  zIndex: 1000,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-                }}>
-                  {folders.map(folder => (
-                    <div
-                      key={folder.id}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleMoveToFolder(folder.id)
-                      }}
-                      style={{
-                        padding: '8px 12px',
-                        cursor: 'pointer',
-                        borderRadius: '4px',
-                        marginBottom: '4px',
-                        backgroundColor: noteToShow?.folder_id === folder.id ? 'var(--hover)' : 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (noteToShow?.folder_id !== folder.id) {
-                          e.currentTarget.style.backgroundColor = 'var(--hover)'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (noteToShow?.folder_id !== folder.id) {
-                          e.currentTarget.style.backgroundColor = 'transparent'
-                        }
-                      }}
-                    >
-                      {folder.name}
-                    </div>
-                  ))}
-                </div>
-              </>
             )}
           </>
         )}
@@ -2454,7 +2491,7 @@ export default function Notes() {
                             }}
                             title={note.is_favorite ? 'Убрать из избранного' : 'Добавить в избранное'}
                           >
-                            <LightningIcon isActive={note.is_favorite || false} width={20} height={20} />
+                            <StarIcon isActive={note.is_favorite || false} />
                           </button>
                         )}
                         <button 
