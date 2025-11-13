@@ -15,8 +15,16 @@ RUN npm ci
 # Копируем исходный код
 COPY . .
 
-# Проверяем, что файл faq.ts скопирован (для отладки)
-RUN test -f src/ui/data/faq.ts && echo "✅ faq.ts found" || echo "❌ faq.ts NOT found" && ls -la src/ui/data/ || true
+# Проверяем, что файлы скопированы (для отладки)
+RUN echo "📋 Checking utils files..." && \
+    if [ -f src/utils/faq.ts ]; then \
+      echo "✅ faq.ts found in utils"; \
+      ls -lh src/utils/faq.ts; \
+    else \
+      echo "❌ faq.ts NOT found in utils"; \
+      echo "Contents of src/utils/:"; \
+      ls -la src/utils/ 2>/dev/null || echo "⚠️  utils directory not found"; \
+    fi
 
 # Делаем deploy.sh исполняемым
 RUN chmod +x /app/deploy.sh

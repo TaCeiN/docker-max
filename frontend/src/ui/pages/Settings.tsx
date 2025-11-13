@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getUserSettings, updateUserSettings, UserSettings } from '../../api/client'
-import { faqData, privacyPolicy, termsOfService, type FAQItem } from '../data/faq'
+import { faqData, privacyPolicy, termsOfService, type FAQItem } from '../../utils/faq'
 
 export default function Settings() {
   const queryClient = useQueryClient()
