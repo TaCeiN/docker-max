@@ -2,7 +2,23 @@ import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { autoLogin } from '../../auth/autoLogin'
 
+// Определяем платформу (iOS/Android/Desktop)
+function detectPlatform(): { platform: string; isIOS: boolean; isAndroid: boolean; isMobile: boolean } {
+  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || ''
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream
+  const isAndroid = /android/i.test(ua)
+  const isMobile = isIOS || isAndroid || /Mobile|Android|iP(hone|od|ad)/i.test(ua)
+  
+  let platform = 'desktop'
+  if (isIOS) platform = 'iOS'
+  else if (isAndroid) platform = 'Android'
+  else if (isMobile) platform = 'mobile'
+  
+  return { platform, isIOS, isAndroid, isMobile }
+}
+
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const platformInfo = detectPlatform()
   const [checking, setChecking] = useState<boolean>(() => !localStorage.getItem('token'))
   const [failed, setFailed] = useState<boolean>(false)
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
@@ -32,6 +48,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   useEffect(() => {
     console.log('[ProtectedRoute] Компонент монтирован')
+    console.log('[ProtectedRoute] Платформа:', platformInfo.platform, platformInfo.isIOS ? '(iOS)' : platformInfo.isAndroid ? '(Android)' : '')
     const hasToken = !!localStorage.getItem('token')
     console.log('[ProtectedRoute] Токен в localStorage:', hasToken ? 'есть' : 'нет')
     
@@ -43,9 +60,13 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     }
     
     console.log('[ProtectedRoute] Токена нет, запускаем autoLogin с ожиданием SDK...')
+    if (platformInfo.isIOS) {
+      console.log('[ProtectedRoute] iOS: Запуск авторизации с увеличенным временем ожидания...')
+    }
     let canceled = false
     let attemptCount = 0
-    const MAX_ATTEMPTS = 5 // Увеличено до 5 попыток для первого запуска
+    // Для iOS увеличиваем количество попыток (больше времени ожидания SDK)
+    const MAX_ATTEMPTS = platformInfo.isIOS ? 8 : 5 // 8 попыток для iOS, 5 для других
     let lastInitDataCheck: string | null = null
     
     // Проверяем наличие initData перед началом авторизации
@@ -98,20 +119,43 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       const checkInterval = 200 // Проверяем каждые 200ms
       const maxAttempts = Math.floor(maxWaitTime / checkInterval)
       
-      for (let i = 0; i < maxAttempts; i++) {
+      // Для iOS увеличиваем время ожидания, если не указано явно
+      const actualMaxWaitTime = platformInfo.isIOS && maxWaitTime === 5000 ? 10000 : maxWaitTime // 10 секунд для iOS
+      const actualMaxAttempts = Math.floor(actualMaxWaitTime / checkInterval)
+      
+      if (platformInfo.isIOS) {
+        console.log(`[ProtectedRoute] iOS: Ожидание initData до ${actualMaxWaitTime / 1000} секунд...`)
+      }
+      
+      for (let i = 0; i < actualMaxAttempts; i++) {
         if (canceled) return false
         
         if (checkInitDataAvailable()) {
-          console.log(`[ProtectedRoute] ✅ initData появился через ${(Date.now() - startTime) / 1000} секунд`)
+          const elapsed = (Date.now() - startTime) / 1000
+          console.log(`[ProtectedRoute] ✅ initData появился через ${elapsed.toFixed(2)} секунд${platformInfo.isIOS ? ' [iOS]' : ''}`)
+          if (platformInfo.isIOS) {
+            console.log(`[ProtectedRoute] iOS: ✅ initData найден, можно продолжать авторизацию`)
+          }
           return true
         }
         
-        if (i < maxAttempts - 1) {
+        // На iOS логируем каждые 10 попыток для диагностики
+        if (platformInfo.isIOS && i > 0 && i % 10 === 0) {
+          const elapsed = (Date.now() - startTime) / 1000
+          console.log(`[ProtectedRoute] iOS: Ожидание initData... (прошло ${elapsed.toFixed(2)} секунд, попытка ${i}/${actualMaxAttempts})`)
+        }
+        
+        if (i < actualMaxAttempts - 1) {
           await new Promise(resolve => setTimeout(resolve, checkInterval))
         }
       }
       
-      console.log(`[ProtectedRoute] ⚠️ initData не появился за ${maxWaitTime / 1000} секунд`)
+      const elapsed = (Date.now() - startTime) / 1000
+      console.log(`[ProtectedRoute] ⚠️ initData не появился за ${elapsed.toFixed(2)} секунд${platformInfo.isIOS ? ' [iOS]' : ''}`)
+      if (platformInfo.isIOS) {
+        console.log(`[ProtectedRoute] iOS: ⚠️ initData не появился, но продолжаем попытку авторизации...`)
+        console.log(`[ProtectedRoute] iOS: autoLogin() попытается найти initData самостоятельно`)
+      }
       return false
     }
     
@@ -122,16 +166,26 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       console.log(`[ProtectedRoute] ========================================`)
       console.log(`[ProtectedRoute] Попытка авторизации ${attemptCount}/${MAX_ATTEMPTS}`)
       
-      // Перед авторизацией ждем появления initData (до 5 секунд для каждой попытки)
+      // Перед авторизацией ждем появления initData
+      // Для iOS увеличиваем время ожидания (до 10 секунд для первой попытки, до 5 секунд для последующих)
+      // Для других платформ - до 5 секунд для первой попытки, до 2 секунд для последующих
       if (attemptCount === 1) {
-        console.log('[ProtectedRoute] Первая попытка: ожидаем появления initData...')
-        const initDataAvailable = await waitForInitDataAvailable(5000)
+        const waitTime = platformInfo.isIOS ? 10000 : 5000
+        console.log(`[ProtectedRoute] Первая попытка: ожидаем появления initData... (до ${waitTime / 1000} секунд)${platformInfo.isIOS ? ' [iOS]' : ''}`)
+        if (platformInfo.isIOS) {
+          console.log('[ProtectedRoute] iOS: Увеличенное время ожидания для первой попытки на iOS')
+        }
+        const initDataAvailable = await waitForInitDataAvailable(waitTime)
         if (!initDataAvailable) {
           console.log('[ProtectedRoute] initData не появился, но продолжаем попытку авторизации...')
+          if (platformInfo.isIOS) {
+            console.log('[ProtectedRoute] iOS: autoLogin() будет пытаться найти initData самостоятельно')
+          }
         }
       } else {
-        // Для последующих попыток ждем меньше
-        await waitForInitDataAvailable(2000)
+        // Для последующих попыток ждем меньше (но для iOS все равно больше)
+        const waitTime = platformInfo.isIOS ? 5000 : 2000
+        await waitForInitDataAvailable(waitTime)
       }
       
       try {
@@ -217,12 +271,17 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     }
     
     // Небольшая задержка перед первой попыткой, чтобы дать время SDK загрузиться
-    console.log('[ProtectedRoute] Ожидание 500ms перед началом авторизации...')
+    // Для iOS увеличиваем задержку (SDK может загружаться медленнее)
+    const initialDelay = platformInfo.isIOS ? 1000 : 500 // 1 секунда для iOS, 500ms для других
+    console.log(`[ProtectedRoute] Ожидание ${initialDelay}ms перед началом авторизации...${platformInfo.isIOS ? ' [iOS]' : ''}`)
+    if (platformInfo.isIOS) {
+      console.log('[ProtectedRoute] iOS: Увеличенная задержка перед первой попыткой авторизации')
+    }
     setTimeout(() => {
       if (!canceled) {
         tryAuth()
       }
-    }, 500)
+    }, initialDelay)
     
     return () => { canceled = true }
   }, [])

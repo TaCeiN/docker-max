@@ -3,7 +3,23 @@ import { useNavigate } from 'react-router-dom'
 import { login, register } from '../../api/client'
 import { autoLogin } from '../../auth/autoLogin'
 
+// Определяем платформу (iOS/Android/Desktop)
+function detectPlatform(): { platform: string; isIOS: boolean; isAndroid: boolean; isMobile: boolean } {
+  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || ''
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream
+  const isAndroid = /android/i.test(ua)
+  const isMobile = isIOS || isAndroid || /Mobile|Android|iP(hone|od|ad)/i.test(ua)
+  
+  let platform = 'desktop'
+  if (isIOS) platform = 'iOS'
+  else if (isAndroid) platform = 'Android'
+  else if (isMobile) platform = 'mobile'
+  
+  return { platform, isIOS, isAndroid, isMobile }
+}
+
 export default function Login() {
+  const platformInfo = detectPlatform()
   const [username, setUsername] = useState('')
   const [uuid, setUuid] = useState('')
   const [loading, setLoading] = useState(false)
@@ -16,6 +32,7 @@ export default function Login() {
   // Пытаемся автоматически залогиниться при загрузке страницы
   useEffect(() => {
     console.log('[Login] Компонент Login загружен')
+    console.log('[Login] Платформа:', platformInfo.platform, platformInfo.isIOS ? '(iOS)' : platformInfo.isAndroid ? '(Android)' : '')
     console.log('[Login] Проверяем токен в localStorage:', !!localStorage.getItem('token'))
     
     // Если токен уже есть, перенаправляем
@@ -27,9 +44,13 @@ export default function Login() {
     
     // Пытаемся автоматически залогиниться с ожиданием SDK и повторными попытками
     console.log('[Login] Токена нет, пытаемся autoLogin с ожиданием SDK...')
+    if (platformInfo.isIOS) {
+      console.log('[Login] iOS: Запуск авторизации с увеличенным временем ожидания...')
+    }
     let canceled = false
     let attemptCount = 0
-    const MAX_ATTEMPTS = 5 // Увеличено до 5 попыток для первого запуска
+    // Для iOS увеличиваем количество попыток (больше времени ожидания SDK)
+    const MAX_ATTEMPTS = platformInfo.isIOS ? 8 : 5 // 8 попыток для iOS, 5 для других
     
     // Функция для проверки наличия initData
     const checkInitDataAvailable = (): boolean => {
@@ -75,14 +96,30 @@ export default function Login() {
     const waitForInitDataAvailable = async (maxWaitTime: number = 5000): Promise<boolean> => {
       const startTime = Date.now()
       const checkInterval = 200
-      const maxAttempts = Math.floor(maxWaitTime / checkInterval)
+      // Для iOS увеличиваем время ожидания, если не указано явно
+      const actualMaxWaitTime = platformInfo.isIOS && maxWaitTime === 5000 ? 10000 : maxWaitTime // 10 секунд для iOS
+      const maxAttempts = Math.floor(actualMaxWaitTime / checkInterval)
+      
+      if (platformInfo.isIOS) {
+        console.log(`[Login] iOS: Ожидание initData до ${actualMaxWaitTime / 1000} секунд...`)
+      }
       
       for (let i = 0; i < maxAttempts; i++) {
         if (canceled) return false
         
         if (checkInitDataAvailable()) {
-          console.log(`[Login] ✅ initData появился через ${(Date.now() - startTime) / 1000} секунд`)
+          const elapsed = (Date.now() - startTime) / 1000
+          console.log(`[Login] ✅ initData появился через ${elapsed.toFixed(2)} секунд${platformInfo.isIOS ? ' [iOS]' : ''}`)
+          if (platformInfo.isIOS) {
+            console.log('[Login] iOS: ✅ initData найден, можно продолжать авторизацию')
+          }
           return true
+        }
+        
+        // На iOS логируем каждые 10 попыток для диагностики
+        if (platformInfo.isIOS && i > 0 && i % 10 === 0) {
+          const elapsed = (Date.now() - startTime) / 1000
+          console.log(`[Login] iOS: Ожидание initData... (прошло ${elapsed.toFixed(2)} секунд, попытка ${i}/${maxAttempts})`)
         }
         
         if (i < maxAttempts - 1) {
@@ -90,7 +127,12 @@ export default function Login() {
         }
       }
       
-      console.log(`[Login] ⚠️ initData не появился за ${maxWaitTime / 1000} секунд`)
+      const elapsed = (Date.now() - startTime) / 1000
+      console.log(`[Login] ⚠️ initData не появился за ${elapsed.toFixed(2)} секунд${platformInfo.isIOS ? ' [iOS]' : ''}`)
+      if (platformInfo.isIOS) {
+        console.log('[Login] iOS: ⚠️ initData не появился, но продолжаем попытку авторизации...')
+        console.log('[Login] iOS: autoLogin() попытается найти initData самостоятельно')
+      }
       return false
     }
     
@@ -99,23 +141,39 @@ export default function Login() {
       
       attemptCount++
       console.log(`[Login] ========================================`)
-      console.log(`[Login] Попытка авторизации ${attemptCount}/${MAX_ATTEMPTS}`)
+      console.log(`[Login] Попытка авторизации ${attemptCount}/${MAX_ATTEMPTS}${platformInfo.isIOS ? ' [iOS]' : ''}`)
       
-      // Перед авторизацией ждем появления initData (до 5 секунд для первой попытки)
+      // Перед авторизацией ждем появления initData
+      // Для iOS увеличиваем время ожидания (до 10 секунд для первой попытки, до 5 секунд для последующих)
+      // Для других платформ - до 5 секунд для первой попытки, до 2 секунд для последующих
       if (attemptCount === 1) {
-        console.log('[Login] Первая попытка: ожидаем появления initData...')
-        const initDataAvailable = await waitForInitDataAvailable(5000)
+        const waitTime = platformInfo.isIOS ? 10000 : 5000
+        console.log(`[Login] Первая попытка: ожидаем появления initData... (до ${waitTime / 1000} секунд)${platformInfo.isIOS ? ' [iOS]' : ''}`)
+        if (platformInfo.isIOS) {
+          console.log('[Login] iOS: Увеличенное время ожидания для первой попытки на iOS')
+        }
+        const initDataAvailable = await waitForInitDataAvailable(waitTime)
         if (!initDataAvailable) {
-          console.log('[Login] initData не появился сразу, но продолжаем попытку авторизации (autoLogin будет ждать до 30 секунд)...')
+          const maxWaitTime = platformInfo.isIOS ? 60 : 30
+          console.log(`[Login] initData не появился сразу, но продолжаем попытку авторизации (autoLogin будет ждать до ${maxWaitTime} секунд)...`)
+          if (platformInfo.isIOS) {
+            console.log('[Login] iOS: autoLogin() будет пытаться найти initData самостоятельно')
+          }
         }
       } else {
-        // Для последующих попыток ждем меньше
-        await waitForInitDataAvailable(2000)
+        // Для последующих попыток ждем меньше (но для iOS все равно больше)
+        const waitTime = platformInfo.isIOS ? 5000 : 2000
+        await waitForInitDataAvailable(waitTime)
       }
       
       try {
-        // Ждем загрузки SDK и initData (до 30 секунд)
-        console.log('[Login] Вызываем autoLogin() с waitForData=true...')
+        // Ждем загрузки SDK и initData
+        // Для iOS autoLogin будет ждать до 60 секунд, для других - до 30 секунд
+        const maxWaitTime = platformInfo.isIOS ? 60 : 30
+        console.log(`[Login] Вызываем autoLogin() с waitForData=true... (будет ждать до ${maxWaitTime} секунд)${platformInfo.isIOS ? ' [iOS]' : ''}`)
+        if (platformInfo.isIOS) {
+          console.log('[Login] iOS: autoLogin() будет ждать до 60 секунд для загрузки SDK')
+        }
         const ok = await autoLogin(true)
         if (!canceled && ok) {
           console.log('[Login] autoLogin успешен, проверяем токен...')
@@ -209,12 +267,17 @@ export default function Login() {
     }
     
     // Небольшая задержка перед первой попыткой, чтобы дать время SDK загрузиться
-    console.log('[Login] Ожидание 500ms перед началом авторизации...')
+    // Для iOS увеличиваем задержку (SDK может загружаться медленнее)
+    const initialDelay = platformInfo.isIOS ? 1000 : 500 // 1 секунда для iOS, 500ms для других
+    console.log(`[Login] Ожидание ${initialDelay}ms перед началом авторизации...${platformInfo.isIOS ? ' [iOS]' : ''}`)
+    if (platformInfo.isIOS) {
+      console.log('[Login] iOS: Увеличенная задержка перед первой попыткой авторизации')
+    }
     setTimeout(() => {
       if (!canceled) {
         tryAuth()
       }
-    }, 500)
+    }, initialDelay)
     
     return () => { canceled = true }
   }, [navigate])

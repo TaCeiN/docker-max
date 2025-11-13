@@ -1,5 +1,6 @@
 import time
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -350,5 +351,13 @@ def get_me(user: User = Depends(get_current_user)):
     Получает данные текущего авторизованного пользователя.
     Используется для получения информации о пользователе после авторизации.
     """
-    return user
+    # Конвертируем created_at в строку перед возвратом модели
+    # Это необходимо, так как Pydantic v2 с from_attributes=True может не вызывать field_serializer правильно
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "uuid": user.uuid,
+        "created_at": user.created_at.isoformat() if isinstance(user.created_at, datetime) else str(user.created_at)
+    }
+    return UserOut(**user_dict)
 

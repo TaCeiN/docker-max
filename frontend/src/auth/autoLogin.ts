@@ -1,4 +1,21 @@
 /**
+ * Определяет платформу (iOS/Android/Desktop)
+ */
+function detectPlatform(): { platform: string; isIOS: boolean; isAndroid: boolean; isMobile: boolean } {
+  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || ''
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream
+  const isAndroid = /android/i.test(ua)
+  const isMobile = isIOS || isAndroid || /Mobile|Android|iP(hone|od|ad)/i.test(ua)
+  
+  let platform = 'desktop'
+  if (isIOS) platform = 'iOS'
+  else if (isAndroid) platform = 'Android'
+  else if (isMobile) platform = 'mobile'
+  
+  return { platform, isIOS, isAndroid, isMobile }
+}
+
+/**
  * Ожидает загрузки Max WebApp SDK и получения initData
  * Делает повторные попытки с интервалом
  * Увеличено время ожидания для надежной работы с медленной загрузкой SDK
@@ -6,8 +23,13 @@
  */
 async function waitForInitData(maxAttempts: number = 60, intervalMs: number = 500): Promise<string | null> {
   const w = window as any
+  const platformInfo = detectPlatform()
   
-  console.log(`[waitForInitData] Начинаем ожидание initData: ${maxAttempts} попыток по ${intervalMs}ms (всего до ${maxAttempts * intervalMs / 1000} секунд)`)
+  // Для iOS увеличиваем время ожидания, если не указано явно
+  const actualMaxAttempts = platformInfo.isIOS && maxAttempts === 60 ? 120 : maxAttempts // 120 попыток = 60 секунд для iOS
+  
+  console.log(`[waitForInitData] Начинаем ожидание initData: ${actualMaxAttempts} попыток по ${intervalMs}ms (всего до ${actualMaxAttempts * intervalMs / 1000} секунд)`)
+  console.log(`[waitForInitData] Платформа: ${platformInfo.platform}${platformInfo.isIOS ? ' (iOS - увеличенное время ожидания)' : ''}`)
   
   // Сначала проверяем сохраненный initData
   try {
@@ -20,14 +42,24 @@ async function waitForInitData(maxAttempts: number = 60, intervalMs: number = 50
     console.warn('[waitForInitData] Ошибка при чтении localStorage:', e)
   }
   
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < actualMaxAttempts; attempt++) {
     const attemptNumber = attempt + 1
     const elapsed = attempt * intervalMs
     const elapsedSeconds = Math.round(elapsed / 1000)
     
-    if (attemptNumber % 10 === 0 || attemptNumber <= 5) {
-      // Логируем каждые 10 попыток или первые 5
-      console.log(`[waitForInitData] Попытка ${attemptNumber}/${maxAttempts} (прошло ${elapsedSeconds} секунд)`)
+    // На iOS логируем чаще для диагностики
+    const shouldLog = platformInfo.isIOS 
+      ? (attemptNumber % 5 === 0 || attemptNumber <= 10) // Каждые 5 попыток или первые 10 для iOS
+      : (attemptNumber % 10 === 0 || attemptNumber <= 5) // Каждые 10 попыток или первые 5 для других
+    
+    if (shouldLog) {
+      console.log(`[waitForInitData] Попытка ${attemptNumber}/${actualMaxAttempts} (прошло ${elapsedSeconds} секунд)${platformInfo.isIOS ? ' [iOS]' : ''}`)
+      if (platformInfo.isIOS) {
+        console.log(`[waitForInitData] iOS: Проверяем SDK объекты...`)
+        console.log(`[waitForInitData] iOS: window.MaxWebApp:`, w?.MaxWebApp ? 'найден' : 'не найден')
+        console.log(`[waitForInitData] iOS: window.Telegram:`, w?.Telegram ? 'найден' : 'не найден')
+        console.log(`[waitForInitData] iOS: window.Max:`, w?.Max ? 'найден' : 'не найден')
+      }
     }
     
     // Проверяем все возможные источники
@@ -48,9 +80,13 @@ async function waitForInitData(maxAttempts: number = 60, intervalMs: number = 50
     
     // Проверяем, загружается ли SDK
     if (w?.MaxWebApp || w?.Telegram?.WebApp || w?.Max?.WebApp) {
-      if (attemptNumber % 10 === 0) {
-        console.log(`[waitForInitData] SDK обнаружен, но initData еще нет, ждем... (попытка ${attemptNumber})`)
+      const logInterval = platformInfo.isIOS ? 5 : 10
+      if (attemptNumber % logInterval === 0) {
+        console.log(`[waitForInitData] SDK обнаружен, но initData еще нет, ждем... (попытка ${attemptNumber})${platformInfo.isIOS ? ' [iOS]' : ''}`)
       }
+    } else if (platformInfo.isIOS && attemptNumber % 10 === 0) {
+      // На iOS логируем, если SDK не найден
+      console.log(`[waitForInitData] iOS: SDK не найден на попытке ${attemptNumber}, продолжаем ожидание...`)
     }
     
     // Также проверяем sessionStorage
@@ -71,22 +107,35 @@ async function waitForInitData(maxAttempts: number = 60, intervalMs: number = 50
     }
     
     // Если это не последняя попытка, ждем перед следующей
-    if (attempt < maxAttempts - 1) {
+    if (attempt < actualMaxAttempts - 1) {
       await new Promise(resolve => setTimeout(resolve, intervalMs))
     }
   }
   
-  console.log(`[waitForInitData] ❌ initData не найден после ${maxAttempts} попыток (${maxAttempts * intervalMs / 1000} секунд)`)
+  console.log(`[waitForInitData] ❌ initData не найден после ${actualMaxAttempts} попыток (${actualMaxAttempts * intervalMs / 1000} секунд)`)
+  if (platformInfo.isIOS) {
+    console.log(`[waitForInitData] iOS: ⚠️ initData не найден после всех попыток`)
+    console.log(`[waitForInitData] iOS: Проверьте, что SDK Max загружается правильно и initData приходит через postMessage или SDK`)
+    console.log(`[waitForInitData] iOS: window.MaxWebApp:`, w?.MaxWebApp ? 'найден' : 'не найден')
+    console.log(`[waitForInitData] iOS: window.Telegram:`, w?.Telegram ? 'найден' : 'не найден')
+    console.log(`[waitForInitData] iOS: window.Max:`, w?.Max ? 'найден' : 'не найден')
+  }
   
   // Финальная попытка: проверяем сохраненный initData еще раз
   try {
     const savedInitData = localStorage.getItem('initData_saved')
     if (savedInitData) {
       console.log('[waitForInitData] ✅ Используем сохраненный initData из localStorage как fallback')
+      if (platformInfo.isIOS) {
+        console.log('[waitForInitData] iOS: Используем сохраненный initData из localStorage')
+      }
       return savedInitData
     }
   } catch (e) {
     console.warn('[waitForInitData] Ошибка при финальной проверке localStorage:', e)
+    if (platformInfo.isIOS) {
+      console.warn('[waitForInitData] iOS: Ошибка при чтении localStorage:', e)
+    }
   }
   
   return null
@@ -101,12 +150,19 @@ async function waitForInitData(maxAttempts: number = 60, intervalMs: number = 50
  */
 function getInitData(): string | null {
   const w = window as any
+  const platformInfo = detectPlatform()
   
   console.log('[getInitData] ========================================')
   console.log('[getInitData] 🔍 Начинаем поиск initData...')
+  console.log('[getInitData] Платформа:', platformInfo.platform, platformInfo.isIOS ? '(iOS)' : platformInfo.isAndroid ? '(Android)' : '')
   console.log('[getInitData] window.location.href:', window.location.href)
   console.log('[getInitData] window.location.search:', window.location.search)
   console.log('[getInitData] window.location.hash:', window.location.hash)
+  
+  if (platformInfo.isIOS) {
+    console.log('[getInitData] iOS: Проверка всех источников initData...')
+    console.log('[getInitData] iOS: User Agent:', navigator.userAgent)
+  }
   
   // 0. Проверяем localStorage для сохраненного initData (если был сохранен ранее)
   try {
@@ -122,8 +178,20 @@ function getInitData(): string | null {
   
   // 1. Попытка получить из Max WebApp SDK
   console.log('[getInitData] Проверяем window.MaxWebApp:', w?.MaxWebApp)
+  if (platformInfo.isIOS) {
+    console.log('[getInitData] iOS: Проверка window.MaxWebApp...')
+    console.log('[getInitData] iOS: window.MaxWebApp существует:', !!w?.MaxWebApp)
+    if (w?.MaxWebApp) {
+      console.log('[getInitData] iOS: window.MaxWebApp ключи:', Object.keys(w.MaxWebApp))
+      console.log('[getInitData] iOS: window.MaxWebApp.initData:', w.MaxWebApp.initData ? 'есть' : 'нет')
+    }
+  }
+  
   if (w?.MaxWebApp?.initData) {
     console.log('[getInitData] ✅ Найден в window.MaxWebApp.initData')
+    if (platformInfo.isIOS) {
+      console.log('[getInitData] iOS: ✅ initData найден в window.MaxWebApp.initData')
+    }
     const initData = w.MaxWebApp.initData
     // Сохраняем для последующих запусков
     try {
@@ -137,6 +205,9 @@ function getInitData(): string | null {
   // Проверяем другие возможные пути к Max WebApp SDK
   if (w?.Telegram?.WebApp?.initData) {
     console.log('[getInitData] ✅ Найден в window.Telegram.WebApp.initData')
+    if (platformInfo.isIOS) {
+      console.log('[getInitData] iOS: ✅ initData найден в window.Telegram.WebApp.initData')
+    }
     const initData = w.Telegram.WebApp.initData
     try {
       localStorage.setItem('initData_saved', initData)
@@ -148,6 +219,9 @@ function getInitData(): string | null {
   
   if (w?.Max?.WebApp?.initData) {
     console.log('[getInitData] ✅ Найден в window.Max.WebApp.initData')
+    if (platformInfo.isIOS) {
+      console.log('[getInitData] iOS: ✅ initData найден в window.Max.WebApp.initData')
+    }
     const initData = w.Max.WebApp.initData
     try {
       localStorage.setItem('initData_saved', initData)
@@ -155,6 +229,11 @@ function getInitData(): string | null {
       console.warn('[getInitData] Не удалось сохранить initData в localStorage:', e)
     }
     return initData
+  }
+  
+  if (platformInfo.isIOS) {
+    console.log('[getInitData] iOS: ⚠️ SDK объекты не содержат initData')
+    console.log('[getInitData] iOS: Проверяем другие источники (URL параметры, sessionStorage, localStorage)...')
   }
   
   // 1.5. Проверяем sessionStorage (может быть сохранен из postMessage)
@@ -369,6 +448,39 @@ function getInitData(): string | null {
     const kLower = k.toLowerCase()
     return kLower.includes('max') || kLower.includes('telegram') || kLower.includes('web')
   }))
+  
+  if (platformInfo.isIOS) {
+    console.log('[getInitData] iOS: ⚠️ initData не найден ни в одном источнике')
+    console.log('[getInitData] iOS: Проверка всех источников завершена')
+    console.log('[getInitData] iOS: window.MaxWebApp:', w?.MaxWebApp ? 'найден' : 'не найден')
+    if (w?.MaxWebApp) {
+      console.log('[getInitData] iOS: window.MaxWebApp ключи:', Object.keys(w.MaxWebApp))
+      console.log('[getInitData] iOS: window.MaxWebApp.initData:', w.MaxWebApp.initData ? 'есть' : 'нет')
+    }
+    console.log('[getInitData] iOS: window.Telegram:', w?.Telegram ? 'найден' : 'не найден')
+    if (w?.Telegram) {
+      console.log('[getInitData] iOS: window.Telegram ключи:', Object.keys(w.Telegram))
+      console.log('[getInitData] iOS: window.Telegram.WebApp:', w.Telegram.WebApp ? 'найден' : 'не найден')
+      if (w.Telegram.WebApp) {
+        console.log('[getInitData] iOS: window.Telegram.WebApp.initData:', w.Telegram.WebApp.initData ? 'есть' : 'нет')
+      }
+    }
+    console.log('[getInitData] iOS: window.Max:', w?.Max ? 'найден' : 'не найден')
+    if (w?.Max) {
+      console.log('[getInitData] iOS: window.Max ключи:', Object.keys(w.Max))
+      console.log('[getInitData] iOS: window.Max.WebApp:', w.Max.WebApp ? 'найден' : 'не найден')
+      if (w.Max.WebApp) {
+        console.log('[getInitData] iOS: window.Max.WebApp.initData:', w.Max.WebApp.initData ? 'есть' : 'нет')
+      }
+    }
+    console.log('[getInitData] iOS: localStorage.getItem("initData_saved"):', localStorage.getItem('initData_saved') ? 'есть' : 'нет')
+    console.log('[getInitData] iOS: sessionStorage.getItem("initData_from_postMessage"):', sessionStorage.getItem('initData_from_postMessage') ? 'есть' : 'нет')
+    console.log('[getInitData] iOS: window.location.href:', window.location.href)
+    console.log('[getInitData] iOS: window.location.search:', window.location.search)
+    console.log('[getInitData] iOS: window.location.hash:', window.location.hash)
+    console.log('[getInitData] iOS: User Agent:', navigator.userAgent)
+  }
+  
   console.log('[getInitData] ========================================')
   
   return null
@@ -412,8 +524,10 @@ function extractUserIdFromInitData(initData: string): number | null {
 }
 
 export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
+  const platformInfo = detectPlatform()
   console.log('[autoLogin] ========================================')
   console.log('[autoLogin] 🚀 Запуск autoLogin()')
+  console.log('[autoLogin] Платформа:', platformInfo.platform, platformInfo.isIOS ? '(iOS)' : platformInfo.isAndroid ? '(Android)' : '')
   console.log('[autoLogin] ========================================')
   
   try {
@@ -422,12 +536,21 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
     // Сначала пробуем получить сразу
     initData = getInitData()
     
+    if (platformInfo.isIOS) {
+      console.log('[autoLogin] iOS: Проверка initData при запуске...')
+      console.log('[autoLogin] iOS: initData найден сразу:', initData ? 'ДА' : 'НЕТ')
+    }
+    
     // Если не найден и нужно ждать, делаем повторные попытки
     if (!initData && waitForData) {
       console.log('[autoLogin] ⚠️ initData не найден сразу, ожидаем загрузки SDK...')
-      // Увеличено до 60 попыток по 500ms = до 30 секунд для надежной работы с медленной загрузкой SDK
-      // Это должно быть достаточно для первого запуска, когда SDK загружается медленнее
-      initData = await waitForInitData(60, 500)
+      if (platformInfo.isIOS) {
+        console.log('[autoLogin] iOS: Ожидание загрузки SDK с увеличенным временем (до 60 секунд)...')
+      }
+      // Для iOS используем больше попыток (120 попыток = 60 секунд)
+      // Для других платформ - 60 попыток = 30 секунд
+      const maxAttempts = platformInfo.isIOS ? 120 : 60
+      initData = await waitForInitData(maxAttempts, 500)
     }
     
     // Если initData все еще не найден, пробуем использовать сохраненные данные
@@ -477,20 +600,35 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
     if (!initData) {
       console.log('[autoLogin] ❌ initData не найден, авторизация невозможна')
       console.log('[autoLogin] Проверьте, что мини-приложение открыто через Max бота')
+      if (platformInfo.isIOS) {
+        console.log('[autoLogin] iOS: ⚠️ initData не найден, авторизация невозможна')
+        console.log('[autoLogin] iOS: Проверьте, что SDK Max загружается правильно')
+        console.log('[autoLogin] iOS: Проверьте, что initData приходит через postMessage или SDK')
+        console.log('[autoLogin] iOS: Проверьте логи выше для диагностики проблемы')
+      }
       return false
     }
     
     console.log('[autoLogin] ✅ initData найден, длина:', initData.length)
     console.log('[autoLogin] Первые 100 символов initData:', initData.substring(0, 100))
+    if (platformInfo.isIOS) {
+      console.log('[autoLogin] iOS: ✅ initData найден, готов к отправке на сервер')
+    }
 
     // Пытаемся извлечь user_id для логирования
     const userId = extractUserIdFromInitData(initData)
     if (userId) {
       console.log(`[autoLogin] Найден user_id в initData: ${userId}`)
+      if (platformInfo.isIOS) {
+        console.log(`[autoLogin] iOS: user_id в initData: ${userId}`)
+      }
     }
 
     console.log('[autoLogin] Найден initData, отправляем на сервер для авторизации...')
     console.log('[autoLogin] Backend найдет пользователя в БД (сохранен при bot_started) и вернет токен')
+    if (platformInfo.isIOS) {
+      console.log('[autoLogin] iOS: Отправка initData на сервер для авторизации...')
+    }
     
     // Определяем API URL в зависимости от окружения
     const getApiUrl = (): string => {
@@ -532,10 +670,17 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
         console.log('[autoLogin] 📥 Получен ответ от сервера')
         console.log('[autoLogin] Status:', res.status, res.statusText)
         console.log('[autoLogin] Response URL:', res.url)
+        if (platformInfo.isIOS) {
+          console.log(`[autoLogin] iOS: Ответ от сервера: ${res.status} ${res.statusText}`)
+        }
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => 'Unknown error')
           console.error(`[autoLogin] Ошибка ответа сервера (попытка ${retry + 1}/${MAX_RETRIES}):`, res.status, errorText)
+          if (platformInfo.isIOS) {
+            console.error(`[autoLogin] iOS: ⚠️ Ошибка ответа сервера (попытка ${retry + 1}/${MAX_RETRIES}):`, res.status)
+            console.error(`[autoLogin] iOS: Текст ошибки:`, errorText.substring(0, 200))
+          }
           
           // Проверяем, является ли ошибка временной (502, 503, 504, 429)
           const isTemporaryError = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 429
@@ -570,11 +715,17 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
         
         console.log('[autoLogin] ✅ Токен получен от сервера, длина:', token.length)
         console.log('[autoLogin] Первые 50 символов токена:', token.substring(0, 50) + '...')
+        if (platformInfo.isIOS) {
+          console.log('[autoLogin] iOS: ✅ Токен получен от сервера, готов к сохранению')
+        }
         
         // Сохраняем токен в localStorage
         try {
           localStorage.setItem('token', token)
           console.log('[autoLogin] 🔐 Токен сохранен в localStorage')
+          if (platformInfo.isIOS) {
+            console.log('[autoLogin] iOS: 🔐 Токен сохранен в localStorage')
+          }
           
           // Проверяем, что токен действительно сохранен
           const savedToken = localStorage.getItem('token')
@@ -582,15 +733,26 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
             console.error('[autoLogin] ❌ ОШИБКА: Токен не сохранен правильно в localStorage!')
             console.error('[autoLogin] Ожидаемый токен:', token.substring(0, 50))
             console.error('[autoLogin] Сохраненный токен:', savedToken ? savedToken.substring(0, 50) : 'null')
+            if (platformInfo.isIOS) {
+              console.error('[autoLogin] iOS: ❌ ОШИБКА: Токен не сохранен правильно в localStorage!')
+              console.error('[autoLogin] iOS: Проверьте, что localStorage доступен на iOS')
+            }
             return false
           }
           
           console.log('[autoLogin] ✅ Токен успешно сохранен и проверен в localStorage')
           console.log('[autoLogin] Пользователь найден в БД (был сохранен при bot_started)')
+          if (platformInfo.isIOS) {
+            console.log('[autoLogin] iOS: ✅ Токен успешно сохранен и проверен в localStorage')
+            console.log('[autoLogin] iOS: Авторизация успешна на iOS')
+          }
           
           // Небольшая задержка для гарантии сохранения токена перед возвратом
           await new Promise(resolve => setTimeout(resolve, 100))
           console.log('[autoLogin] Задержка завершена, токен гарантированно сохранен')
+          if (platformInfo.isIOS) {
+            console.log('[autoLogin] iOS: Задержка завершена, токен гарантированно сохранен')
+          }
           
         } catch (e) {
           console.error('[autoLogin] ❌ Ошибка при сохранении токена в localStorage:', e)
@@ -598,31 +760,38 @@ export async function autoLogin(waitForData: boolean = true): Promise<boolean> {
         }
         
         // Получаем данные пользователя из БД (не критично для авторизации)
-        try {
-          console.log('[autoLogin] Запрашиваем данные пользователя из БД...')
-          const userRes = await fetch(`${apiUrl}/auth/me`, {
-            method: 'GET',
-            headers: { 
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
+        // Временно пропускаем на iOS из-за ошибки с created_at (будет исправлено в backend)
+        // После исправления backend можно убрать эту проверку
+        if (!platformInfo.isIOS) {
+          try {
+            console.log('[autoLogin] Запрашиваем данные пользователя из БД...')
+            const userRes = await fetch(`${apiUrl}/auth/me`, {
+              method: 'GET',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            })
+            
+            if (userRes.ok) {
+              const userData = await userRes.json().catch(() => null)
+              if (userData) {
+                // Сохраняем данные пользователя в localStorage
+                localStorage.setItem('user', JSON.stringify(userData))
+                console.log('[autoLogin] ✅ Данные пользователя получены и сохранены:', userData)
+                console.log(`[autoLogin] Пользователь: ${userData.username} (ID: ${userData.id}, UUID: ${userData.uuid})`)
+              }
+            } else {
+              console.warn('[autoLogin] ⚠️ Не удалось получить данные пользователя:', userRes.status)
+              // Не критично, токен уже сохранен
             }
-          })
-          
-          if (userRes.ok) {
-            const userData = await userRes.json().catch(() => null)
-            if (userData) {
-              // Сохраняем данные пользователя в localStorage
-              localStorage.setItem('user', JSON.stringify(userData))
-              console.log('[autoLogin] ✅ Данные пользователя получены и сохранены:', userData)
-              console.log(`[autoLogin] Пользователь: ${userData.username} (ID: ${userData.id}, UUID: ${userData.uuid})`)
-            }
-          } else {
-            console.warn('[autoLogin] ⚠️ Не удалось получить данные пользователя:', userRes.status)
-            // Не критично, токен уже сохранен
+          } catch (e) {
+            console.warn('[autoLogin] ⚠️ Ошибка при получении данных пользователя:', e)
+            // Не критично, токен уже сохранен, продолжаем работу
           }
-        } catch (e) {
-          console.warn('[autoLogin] ⚠️ Ошибка при получении данных пользователя:', e)
-          // Не критично, токен уже сохранен, продолжаем работу
+        } else {
+          console.log('[autoLogin] iOS: Пропускаем запрос данных пользователя (endpoint /auth/me будет исправлен в backend)')
+          console.log('[autoLogin] iOS: Токен сохранен, авторизация успешна')
         }
         
         // Финальная проверка токена перед возвратом

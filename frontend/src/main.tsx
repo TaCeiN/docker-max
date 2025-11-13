@@ -38,10 +38,29 @@ const queryClient = new QueryClient({
   }
 })
 
-// Логируем информацию о загрузке приложения
+// Определяем платформу (iOS/Android/Desktop)
+function detectPlatform(): { platform: string; isIOS: boolean; isAndroid: boolean; isMobile: boolean } {
+  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || ''
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream
+  const isAndroid = /android/i.test(ua)
+  const isMobile = isIOS || isAndroid || /Mobile|Android|iP(hone|od|ad)/i.test(ua)
+  
+  let platform = 'desktop'
+  if (isIOS) platform = 'iOS'
+  else if (isAndroid) platform = 'Android'
+  else if (isMobile) platform = 'mobile'
+  
+  return { platform, isIOS, isAndroid, isMobile }
+}
+
+const platformInfo = detectPlatform()
 console.log('[App] ========================================')
 console.log('[App] 🚀 Приложение загружается...')
 console.log('[App] ========================================')
+console.log('[App] Платформа:', platformInfo.platform)
+console.log('[App] iOS:', platformInfo.isIOS)
+console.log('[App] Android:', platformInfo.isAndroid)
+console.log('[App] Mobile:', platformInfo.isMobile)
 console.log('[App] URL:', window.location.href)
 console.log('[App] User Agent:', navigator.userAgent)
 console.log('[App] Все параметры URL:')
@@ -66,6 +85,17 @@ if (w?.MaxWebApp) {
   if (w.MaxWebApp.initData) {
     console.log('[App] MaxWebApp.initData (первые 100 символов):', w.MaxWebApp.initData.substring(0, 100))
   }
+} else {
+  console.log('[App] ⚠️ MaxWebApp не найден при загрузке (может загрузиться позже)')
+}
+
+// Проверяем наличие SDK на iOS отдельно
+if (platformInfo.isIOS) {
+  console.log('[App] 📱 iOS устройство обнаружено, применяем специальные настройки...')
+  console.log('[App] iOS: Проверяем наличие SDK с увеличенным временем ожидания')
+  console.log('[App] iOS: window.MaxWebApp:', w?.MaxWebApp ? 'найден' : 'не найден (будет проверяться)')
+  console.log('[App] iOS: window.Telegram:', w?.Telegram ? 'найден' : 'не найден')
+  console.log('[App] iOS: window.Max:', w?.Max ? 'найден' : 'не найден')
 }
 
 // Глобальный флаг для отслеживания, была ли уже попытка авторизации
@@ -142,9 +172,20 @@ console.log('[App] window.parent !== window:', window.parent !== window)
 const postMessageHandler = (event: MessageEvent) => {
   console.log('[App] ========================================')
   console.log('[App] 📨 Получено postMessage событие')
+  console.log('[App] Платформа:', platformInfo.platform, platformInfo.isIOS ? '(iOS)' : platformInfo.isAndroid ? '(Android)' : '')
   console.log('[App] Origin:', event.origin)
   console.log('[App] Data type:', typeof event.data)
   console.log('[App] Data:', event.data)
+  
+  // На iOS события могут приходить в другом формате, добавляем дополнительное логирование
+  if (platformInfo.isIOS) {
+    console.log('[App] iOS: Обработка postMessage события...')
+    console.log('[App] iOS: event.origin:', event.origin)
+    console.log('[App] iOS: event.data type:', typeof event.data)
+    if (typeof event.data === 'object' && event.data !== null) {
+      console.log('[App] iOS: event.data keys:', Object.keys(event.data))
+    }
+  }
   
   // Проверяем различные форматы данных
   if (!event.data) {
@@ -284,9 +325,12 @@ if (window.parent !== window) {
 let lastInitData: string | null = null
 let checkSDKInterval: ReturnType<typeof setInterval> | null = null
 let checkSDKStartTime = Date.now()
-// Увеличено время ожидания SDK при первом запуске до 30 секунд
-const MAX_SDK_CHECK_TIME = 30000 // 30 секунд для проверки SDK при первом запуске
+// Увеличено время ожидания SDK при первом запуске до 60 секунд для iOS (SDK может загружаться медленнее)
+// Для Android и других платформ - 30 секунд
+const MAX_SDK_CHECK_TIME = platformInfo.isIOS ? 60000 : 30000 // 60 секунд для iOS, 30 секунд для других
 const SDK_CHECK_INTERVAL = 200 // Проверяем каждые 200ms (чаще, чем раньше)
+
+console.log(`[App] ⏱️ Максимальное время ожидания SDK: ${MAX_SDK_CHECK_TIME / 1000} секунд (${platformInfo.isIOS ? 'iOS' : 'другие платформы'})`)
 
 // Функция для проверки SDK и остановки при необходимости
 function checkSDKAndStopIfNeeded() {
@@ -344,9 +388,23 @@ function handleInitDataFromSDK(initData: string, source: string) {
 
 // Проверяем появление initData в SDK с интервалом
 console.log('[App] Запускаем проверку SDK с интервалом', SDK_CHECK_INTERVAL, 'ms')
+let checkAttempts = 0
 checkSDKInterval = setInterval(() => {
   if (checkSDKAndStopIfNeeded()) {
     return
+  }
+  
+  checkAttempts++
+  
+  // На iOS логируем каждые 10 попыток для диагностики
+  if (platformInfo.isIOS && checkAttempts % 10 === 0) {
+    const elapsed = Date.now() - checkSDKStartTime
+    console.log(`[App] iOS: Проверка SDK (попытка ${checkAttempts}, прошло ${Math.round(elapsed / 1000)} секунд)`)
+    console.log(`[App] iOS: window.MaxWebApp:`, w?.MaxWebApp ? 'найден' : 'не найден')
+    console.log(`[App] iOS: window.Telegram:`, w?.Telegram ? 'найден' : 'не найден')
+    console.log(`[App] iOS: window.Max:`, w?.Max ? 'найден' : 'не найден')
+    console.log(`[App] iOS: localStorage.getItem('initData_saved'):`, localStorage.getItem('initData_saved') ? 'есть' : 'нет')
+    console.log(`[App] iOS: sessionStorage.getItem('initData_from_postMessage'):`, sessionStorage.getItem('initData_from_postMessage') ? 'есть' : 'нет')
   }
   
   // Проверяем SDK объекты
@@ -355,6 +413,9 @@ checkSDKInterval = setInterval(() => {
                          w?.Max?.WebApp?.initData
   
   if (currentInitData && currentInitData !== lastInitData) {
+    if (platformInfo.isIOS) {
+      console.log('[App] iOS: ✅ initData найден в SDK объекте')
+    }
     handleInitDataFromSDK(currentInitData, 'SDK объект')
     return
   }
@@ -363,11 +424,17 @@ checkSDKInterval = setInterval(() => {
   try {
     const fromSessionStorage = sessionStorage.getItem('initData_from_postMessage')
     if (fromSessionStorage && fromSessionStorage !== lastInitData) {
+      if (platformInfo.isIOS) {
+        console.log('[App] iOS: ✅ initData найден в sessionStorage')
+      }
       handleInitDataFromSDK(fromSessionStorage, 'sessionStorage (postMessage)')
       return
     }
   } catch (e) {
     // Игнорируем ошибки sessionStorage
+    if (platformInfo.isIOS) {
+      console.warn('[App] iOS: ⚠️ Ошибка при чтении sessionStorage:', e)
+    }
   }
   
   // Проверяем localStorage для сохраненного initData (если токена еще нет)
@@ -376,11 +443,17 @@ checkSDKInterval = setInterval(() => {
       const savedInitData = localStorage.getItem('initData_saved')
       if (savedInitData && savedInitData !== lastInitData) {
         console.log('[App] ✅ Найден сохраненный initData в localStorage, используем для авторизации')
+        if (platformInfo.isIOS) {
+          console.log('[App] iOS: Используем сохраненный initData для авторизации')
+        }
         handleInitDataFromSDK(savedInitData, 'localStorage (сохраненный)')
         return
       }
     } catch (e) {
       // Игнорируем ошибки localStorage
+      if (platformInfo.isIOS) {
+        console.warn('[App] iOS: ⚠️ Ошибка при чтении localStorage:', e)
+      }
     }
   }
 }, SDK_CHECK_INTERVAL)
@@ -390,7 +463,12 @@ setTimeout(() => {
   if (checkSDKInterval) {
     clearInterval(checkSDKInterval)
     checkSDKInterval = null
-    console.log('[App] ⏱️ Остановлена проверка SDK (достигнут максимальный таймаут 30 секунд)')
+    const timeoutSeconds = MAX_SDK_CHECK_TIME / 1000
+    console.log(`[App] ⏱️ Остановлена проверка SDK (достигнут максимальный таймаут ${timeoutSeconds} секунд)`)
+    if (platformInfo.isIOS) {
+      console.log('[App] iOS: ⚠️ Проверка SDK остановлена. Если авторизация не произошла, проверьте логи выше.')
+      console.log('[App] iOS: Проверьте, что SDK Max загружается правильно и initData приходит через postMessage или SDK.')
+    }
   }
 }, MAX_SDK_CHECK_TIME)
 

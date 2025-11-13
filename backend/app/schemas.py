@@ -1,5 +1,6 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, Any
+from datetime import datetime
+from pydantic import BaseModel, field_serializer, model_validator
 
 
 class UserCreate(BaseModel):
@@ -12,6 +13,39 @@ class UserOut(BaseModel):
     username: str
     uuid: str
     created_at: str
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_created_at(cls, data: Any) -> Any:
+        """Конвертирует datetime в ISO строку перед созданием модели"""
+        if isinstance(data, dict):
+            created_at = data.get('created_at')
+            if isinstance(created_at, datetime):
+                data['created_at'] = created_at.isoformat()
+        elif hasattr(data, 'created_at'):
+            # Если это SQLAlchemy модель
+            created_at = getattr(data, 'created_at', None)
+            if isinstance(created_at, datetime):
+                # Создаем словарь с конвертированным значением
+                if not isinstance(data, dict):
+                    # Если data - это объект SQLAlchemy, преобразуем в словарь
+                    result = {
+                        'id': getattr(data, 'id', None),
+                        'username': getattr(data, 'username', None),
+                        'uuid': getattr(data, 'uuid', None),
+                        'created_at': created_at.isoformat()
+                    }
+                    return result
+                else:
+                    data['created_at'] = created_at.isoformat()
+        return data
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, value: Any, _info) -> str:
+        """Конвертирует datetime в ISO строку для сериализации (дополнительная проверка)"""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
 
     class Config:
         from_attributes = True
@@ -94,6 +128,39 @@ class FolderOut(BaseModel):
     name: str
     is_default: bool
     created_at: str
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_created_at(cls, data: Any) -> Any:
+        """Конвертирует datetime в ISO строку перед созданием модели"""
+        if isinstance(data, dict):
+            created_at = data.get('created_at')
+            if isinstance(created_at, datetime):
+                data['created_at'] = created_at.isoformat()
+        elif hasattr(data, 'created_at'):
+            # Если это SQLAlchemy модель
+            created_at = getattr(data, 'created_at', None)
+            if isinstance(created_at, datetime):
+                # Создаем словарь с конвертированным значением
+                if not isinstance(data, dict):
+                    # Если data - это объект SQLAlchemy, преобразуем в словарь
+                    result = {
+                        'id': getattr(data, 'id', None),
+                        'name': getattr(data, 'name', None),
+                        'is_default': getattr(data, 'is_default', None),
+                        'created_at': created_at.isoformat()
+                    }
+                    return result
+                else:
+                    data['created_at'] = created_at.isoformat()
+        return data
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, value: Any, _info) -> str:
+        """Конвертирует datetime в ISO строку для сериализации (дополнительная проверка)"""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
 
     class Config:
         from_attributes = True
