@@ -1051,11 +1051,16 @@ def test_deadline_notification(note_id: int, db: Session = Depends(get_db), user
     import logging
     logger = logging.getLogger(__name__)
     
+    logger.info(f"📤 Отправка тестового уведомления пользователю {db_user.uuid} (user_id: {user.id})")
+    logger.info(f"📤 Сообщение: {message}")
+    
     result = send_message_to_user(db_user.uuid, message, image_url=settings.notification_image_url)
     
-    if result:
+    # Обрабатываем результат отправки
+    if result.get("success"):
         message_id = result.get("message_id")
-        logger.info(f"📤 Результат отправки сообщения: message_id={message_id}, result={result}")
+        logger.info(f"📤 Результат отправки сообщения: message_id={message_id}")
+        logger.info(f"📤 Полный результат: {result}")
         
         # Отслеживаем сообщение для последующего удаления
         if message_id:
@@ -1066,4 +1071,27 @@ def test_deadline_notification(note_id: int, db: Session = Depends(get_db), user
         
         return {"ok": True, "message": "Тестовое уведомление отправлено"}
     else:
-        raise HTTPException(status_code=500, detail="Не удалось отправить тестовое уведомление")
+        # Обрабатываем различные типы ошибок
+        error_code = result.get("error_code")
+        error_message = result.get("error_message")
+        error_type = result.get("error_type")
+        
+        logger.error(f"❌ Ошибка при отправке тестового уведомления:")
+        logger.error(f"❌ Код ошибки: {error_code}")
+        logger.error(f"❌ Сообщение ошибки: {error_message}")
+        logger.error(f"❌ Тип ошибки: {error_type}")
+        
+        # Формируем понятное сообщение для пользователя
+        user_message = "Не удалось отправить тестовое уведомление"
+        
+        if error_type == "chat.denied":
+            user_message = "Не удалось отправить уведомление: диалог с ботом приостановлен. Пожалуйста, убедитесь, что вы начали диалог с ботом и не заблокировали его."
+        elif error_type == "network":
+            user_message = "Не удалось отправить уведомление: ошибка соединения с сервисом уведомлений. Пожалуйста, попробуйте позже."
+        elif error_code == "no_token":
+            user_message = "Не удалось отправить уведомление: ошибка конфигурации сервера. Обратитесь к администратору."
+        elif error_message:
+            user_message = f"Не удалось отправить уведомление: {error_message}"
+        
+        # Возвращаем ошибку с понятным сообщением
+        raise HTTPException(status_code=400, detail=user_message)

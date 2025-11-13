@@ -12,25 +12,48 @@ logger = logging.getLogger(__name__)
 MAX_BOT_API_URL = "https://platform-api.max.ru"
 
 
-def send_message_to_user(user_uuid: str, text: str, image_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def send_message_to_user(user_uuid: str, text: str, image_url: Optional[str] = None) -> Dict[str, Any]:
     """
     Отправляет сообщение пользователю через Max Bot API.
     
     Args:
-        user_uuid: UUID пользователя (user_id из Max Bot API)
+        user_uuid: UUID пользователя (user_id из Max Bot API) - может быть строкой или числом
         text: Текст сообщения
         image_url: Опциональный URL изображения для прикрепления к сообщению
         
     Returns:
-        Dict с message_id и другими данными, если сообщение отправлено успешно, None в противном случае
+        Dict с ключами:
+        - "success": bool - успешность отправки
+        - "message_id": str | None - ID сообщения, если отправлено успешно
+        - "error_code": str | None - код ошибки, если есть
+        - "error_message": str | None - сообщение об ошибке, если есть
+        - "error_type": str | None - тип ошибки ("chat.denied", "network", "other")
+        - "result": dict | None - полный результат ответа API
     """
     try:
         token = settings.max_bot_token
         if not token:
             logger.error("MAX_BOT_TOKEN не установлен в настройках")
-            return None
+            return {
+                "success": False,
+                "message_id": None,
+                "error_code": "no_token",
+                "error_message": "MAX_BOT_TOKEN не установлен в настройках",
+                "error_type": "other",
+                "result": None
+            }
         
         url = f"{MAX_BOT_API_URL}/messages"
+        
+        # Логируем информацию о запросе
+        logger.info(f"🔍 ========================================")
+        logger.info(f"🔍 Отправка сообщения через Max Bot API")
+        logger.info(f"🔍 URL: {url}")
+        logger.info(f"🔍 user_id: {user_uuid} (type: {type(user_uuid).__name__})")
+        logger.info(f"🔍 Текст: {text[:50]}...")
+        logger.info(f"🔍 Изображение: {image_url if image_url else 'нет'}")
+        
+        # Пробуем отправить с исходным форматом user_id
         params = {
             "access_token": token,
             "user_id": user_uuid
@@ -52,11 +75,17 @@ def send_message_to_user(user_uuid: str, text: str, image_url: Optional[str] = N
             ]
             logger.info(f"📷 Прикрепляем изображение к сообщению: {image_url}")
         
+        # Логируем параметры запроса (без токена)
+        logger.info(f"🔍 Параметры запроса: user_id={user_uuid}")
+        logger.info(f"🔍 Payload: {payload}")
+        
         response = requests.post(url, params=params, json=payload, timeout=10)
+        
+        logger.info(f"🔍 Статус ответа: {response.status_code}")
+        logger.info(f"🔍 Ответ API (первые 500 символов): {response.text[:500]}")
         
         if response.status_code == 200:
             result = response.json()
-            # Детальное логирование для отладки
             logger.info(f"📥 Полный ответ API при отправке сообщения: {result}")
             
             # Пробуем разные варианты извлечения message_id
@@ -110,19 +139,153 @@ def send_message_to_user(user_uuid: str, text: str, image_url: Optional[str] = N
                 else:
                     logger.error(f"❌ Не удалось найти message_id ни в ответе, ни по тексту сообщения")
             
+            logger.info(f"🔍 ========================================")
             return {
+                "success": True,
                 "message_id": str(message_id) if message_id else None,
-                "user_id": user_uuid,
-                "text": text,
+                "error_code": None,
+                "error_message": None,
+                "error_type": None,
                 "result": result
             }
-        else:
-            logger.error(f"Ошибка при отправке сообщения пользователю {user_uuid}: {response.status_code} - {response.text}")
-            return None
+        elif response.status_code == 403:
+            # Обрабатываем ошибку 403 отдельно
+            logger.error(f"❌ Ошибка 403 при отправке сообщения пользователю {user_uuid}")
+            logger.error(f"❌ Ответ API: {response.text}")
             
+            error_code = None
+            error_message = None
+            error_type = "chat.denied"
+            
+            try:
+                error_data = response.json()
+                error_code = error_data.get("code")
+                error_message = error_data.get("message")
+                logger.error(f"❌ Код ошибки: {error_code}")
+                logger.error(f"❌ Сообщение ошибки: {error_message}")
+                
+                # Если ошибка "chat.denied" или "error.dialog.suspended", пытаемся отправить с числовым user_id
+                if error_code == "chat.denied" or (error_message and "dialog.suspended" in error_message):
+                    logger.warning(f"⚠️ Диалог приостановлен для строкового user_id. Пробуем отправить с числовым user_id...")
+                    
+                    # Пробуем преобразовать user_id в число, если это строка
+                    try:
+                        numeric_user_id = int(user_uuid)
+                        logger.info(f"🔍 Пробуем отправить с числовым user_id: {numeric_user_id}")
+                        
+                        params_numeric = {
+                            "access_token": token,
+                            "user_id": numeric_user_id
+                        }
+                        
+                        response_numeric = requests.post(url, params=params_numeric, json=payload, timeout=10)
+                        logger.info(f"🔍 Статус ответа (числовой user_id): {response_numeric.status_code}")
+                        logger.info(f"🔍 Ответ API (числовой user_id): {response_numeric.text[:500]}")
+                        
+                        if response_numeric.status_code == 200:
+                            result_numeric = response_numeric.json()
+                            logger.info(f"✅ Сообщение успешно отправлено с числовым user_id!")
+                            
+                            # Извлекаем message_id
+                            message_id = None
+                            if isinstance(result_numeric, dict):
+                                if "message" in result_numeric:
+                                    message_obj = result_numeric.get("message")
+                                    if isinstance(message_obj, dict) and "body" in message_obj:
+                                        body = message_obj.get("body")
+                                        if isinstance(body, dict):
+                                            message_id = body.get("mid")
+                                if not message_id:
+                                    message_id = result_numeric.get("message_id") or result_numeric.get("id")
+                            
+                            logger.info(f"🔍 ========================================")
+                            return {
+                                "success": True,
+                                "message_id": str(message_id) if message_id else None,
+                                "error_code": None,
+                                "error_message": None,
+                                "error_type": None,
+                                "result": result_numeric
+                            }
+                        else:
+                            logger.error(f"❌ Ошибка при отправке с числовым user_id: {response_numeric.status_code} - {response_numeric.text}")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"⚠️ Не удалось преобразовать user_id в число: {e}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось распарсить ответ ошибки как JSON: {e}")
+                error_message = response.text
+            
+            logger.info(f"🔍 ========================================")
+            return {
+                "success": False,
+                "message_id": None,
+                "error_code": error_code or "403",
+                "error_message": error_message or "Доступ запрещен",
+                "error_type": error_type,
+                "result": None
+            }
+        else:
+            # Другие ошибки
+            logger.error(f"❌ Ошибка {response.status_code} при отправке сообщения пользователю {user_uuid}")
+            logger.error(f"❌ Ответ API: {response.text}")
+            
+            error_code = None
+            error_message = None
+            
+            try:
+                error_data = response.json()
+                error_code = error_data.get("code")
+                error_message = error_data.get("message")
+                logger.error(f"❌ Код ошибки: {error_code}")
+                logger.error(f"❌ Сообщение ошибки: {error_message}")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось распарсить ответ ошибки как JSON: {e}")
+                error_message = response.text
+            
+            logger.info(f"🔍 ========================================")
+            return {
+                "success": False,
+                "message_id": None,
+                "error_code": error_code or str(response.status_code),
+                "error_message": error_message or f"Ошибка отправки сообщения: {response.status_code}",
+                "error_type": "other",
+                "result": None
+            }
+            
+    except requests.exceptions.Timeout as e:
+        logger.exception(f"❌ Таймаут при отправке сообщения пользователю {user_uuid}: {e}")
+        logger.info(f"🔍 ========================================")
+        return {
+            "success": False,
+            "message_id": None,
+            "error_code": "timeout",
+            "error_message": "Таймаут при отправке сообщения",
+            "error_type": "network",
+            "result": None
+        }
+    except requests.exceptions.ConnectionError as e:
+        logger.exception(f"❌ Ошибка соединения при отправке сообщения пользователю {user_uuid}: {e}")
+        logger.info(f"🔍 ========================================")
+        return {
+            "success": False,
+            "message_id": None,
+            "error_code": "connection_error",
+            "error_message": "Ошибка соединения с Max Bot API",
+            "error_type": "network",
+            "result": None
+        }
     except Exception as e:
-        logger.exception(f"Исключение при отправке сообщения пользователю {user_uuid}: {e}")
-        return None
+        logger.exception(f"❌ Исключение при отправке сообщения пользователю {user_uuid}: {e}")
+        logger.info(f"🔍 ========================================")
+        return {
+            "success": False,
+            "message_id": None,
+            "error_code": "exception",
+            "error_message": str(e),
+            "error_type": "other",
+            "result": None
+        }
 
 
 def get_messages_from_chat(user_uuid: str, limit: int = 50) -> Optional[list]:

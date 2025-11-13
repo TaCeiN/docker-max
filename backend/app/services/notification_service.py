@@ -121,7 +121,7 @@ def check_and_send_notifications():
                 
                 from ..core.config import settings
                 result = send_message_to_user(user.uuid, message, image_url=settings.notification_image_url)
-                if result:
+                if result.get("success"):
                     message_id = result.get("message_id")
                     # Отслеживаем сообщение для последующего удаления после прочтения
                     if message_id:
@@ -134,9 +134,13 @@ def check_and_send_notifications():
                     )
                     db.add(notification)
                     db.commit()
-                    logger.info(f"Уведомление об окончании дедлайна отправлено для дедлайна {deadline.id}: {message}")
+                    logger.info(f"✅ Уведомление об окончании дедлайна отправлено для дедлайна {deadline.id}: {message}")
                 else:
-                    logger.error(f"Не удалось отправить уведомление об окончании для дедлайна {deadline.id}")
+                    error_code = result.get("error_code")
+                    error_message = result.get("error_message")
+                    error_type = result.get("error_type")
+                    logger.error(f"❌ Не удалось отправить уведомление об окончании для дедлайна {deadline.id}")
+                    logger.error(f"❌ Код ошибки: {error_code}, Тип: {error_type}, Сообщение: {error_message}")
                     
             except Exception as e:
                 logger.exception(f"Ошибка при обработке истекшего дедлайна {deadline.id}: {e}")
@@ -232,7 +236,7 @@ def check_and_send_notifications():
                         
                         from ..core.config import settings
                         result = send_message_to_user(user.uuid, message, image_url=settings.notification_image_url)
-                        if result:
+                        if result.get("success"):
                             message_id = result.get("message_id")
                             # Отслеживаем сообщение для последующего удаления после прочтения
                             if message_id:
@@ -245,11 +249,15 @@ def check_and_send_notifications():
                             )
                             db.add(notification)
                             db.commit()
-                            logger.info(f"Уведомление отправлено для дедлайна {deadline.id}: {message}")
+                            logger.info(f"✅ Уведомление отправлено для дедлайна {deadline.id}: {message}")
                             # Прерываем цикл после отправки первого подходящего уведомления
                             break
                         else:
-                            logger.error(f"Не удалось отправить уведомление для дедлайна {deadline.id}")
+                            error_code = result.get("error_code")
+                            error_message = result.get("error_message")
+                            error_type = result.get("error_type")
+                            logger.error(f"❌ Не удалось отправить уведомление для дедлайна {deadline.id}")
+                            logger.error(f"❌ Код ошибки: {error_code}, Тип: {error_type}, Сообщение: {error_message}")
                             # Не прерываем цикл, чтобы попробовать отправить другое уведомление при следующей проверке
                         
             except Exception as e:
